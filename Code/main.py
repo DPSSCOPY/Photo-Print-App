@@ -11,50 +11,76 @@ class PreviewWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.setMinimumSize(400, 500)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setStyleSheet("background-color: #dbe2e9;")
         self.image_pixmap = None
         self.cols = 6
         self.rows = 6
-        self.gap_px = 5
+        self.paper_w = 210.0
+        self.paper_h = 297.0
+        self.photo_w = 30.0
+        self.photo_h = 40.0
+        self.margin_top = 10
+        self.margin_bottom = 10
+        self.margin_left = 10
+        self.margin_right = 10
+        self.offset_x = 10
+        self.offset_y = 10
+        self.gap = 2
+        self.show_border = False
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # គូរផ្ទៃក្រដាសពណ៌សចំកណ្តាល
-        paper_width = self.width() * 0.7
-        paper_height = self.height() * 0.9
+        # គូរផ្ទៃក្រដាសពណ៌សចំកណ្តាល ដោយរក្សាសមាមាត្រតាមទំហំក្រដាសពិត
+        padding = 10
+        avail_w = self.width() - padding * 2
+        avail_h = self.height() - padding * 2
+        
+        if self.paper_h <= 0: return
+        aspect_ratio = self.paper_w / self.paper_h
+        
+        paper_height = avail_h
+        paper_width = paper_height * aspect_ratio
+        if paper_width > avail_w:
+            paper_width = avail_w
+            paper_height = paper_width / aspect_ratio
+            
         paper_x = (self.width() - paper_width) / 2
         paper_y = (self.height() - paper_height) / 2
         
-        painter.fillRect(int(paper_x), int(paper_y), int(paper_width), int(paper_height), QColor(255, 255, 255))
+        painter.fillRect(int(paper_x), int(paper_y), int(paper_width), int(paper_height), QColor(220, 220, 220))
         
-        # គូរបន្ទាត់គែមក្រដាស (Margins - Dashed Line)
-        margin = 20
-        pen = QPen(QColor(180, 180, 180), 1, Qt.DashLine)
-        painter.setPen(pen)
-        painter.drawRect(int(paper_x + margin), int(paper_y + margin), int(paper_width - margin*2), int(paper_height - margin*2))
-
+        # ខ្នាតសមាមាត្រពី មីលីម៉ែត្រ ទៅ ភីកសែល (px/mm)
+        scale = paper_width / self.paper_w if self.paper_w > 0 else 1
+        
         # គូរក្រឡារូបថតតូចៗ (3x4 cm ឧទាហរណ៍)
         pen = QPen(QColor(200, 200, 200), 1, Qt.SolidLine)
         painter.setPen(pen)
         
         cols, rows = self.cols, self.rows
+        gap_px = self.gap * scale
+        
         if cols > 0 and rows > 0:
-            cell_w = (paper_width - margin*2 - (cols-1)*self.gap_px) / cols
-            cell_h = (paper_height - margin*2 - (rows-1)*self.gap_px) / rows
+            cell_w = self.photo_w * scale
+            cell_h = self.photo_h * scale
             
-            start_x = paper_x + margin
-            start_y = paper_y + margin
+            start_x = paper_x + self.offset_x * scale
+            start_y = paper_y + self.offset_y * scale
             
             painter.setFont(QFont("Arial", 8))
             for row in range(rows):
                 for col in range(cols):
-                    cx = start_x + col * (cell_w + self.gap_px)
-                    cy = start_y + row * (cell_h + self.gap_px)
+                    cx = start_x + col * (cell_w + gap_px)
+                    cy = start_y + row * (cell_h + gap_px)
                     
                     if self.image_pixmap and not self.image_pixmap.isNull():
                         painter.drawPixmap(QRectF(cx, cy, cell_w, cell_h).toRect(), self.image_pixmap)
+                        if self.show_border:
+                            painter.setPen(QPen(QColor(150, 150, 150), 1, Qt.DashLine))
+                            painter.drawRect(int(cx), int(cy), int(cell_w), int(cell_h))
+                            painter.setPen(pen) # ត្រឡប់មក Pen ធម្មតាវិញ
                     else:
                         painter.drawRect(int(cx), int(cy), int(cell_w), int(cell_h))
                         painter.setPen(QColor(100, 100, 100))
@@ -65,7 +91,8 @@ class PhotoPrintApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("កម្មវិធីជំនួយការបោះពុម្ពរូបថត - Photo Print Studio")
-        self.resize(1280, 720)
+        self.resize(1366, 768)
+        self.showMaximized()
         self.initUI()
 
     def initUI(self):
@@ -101,9 +128,15 @@ class PhotoPrintApp(QMainWindow):
         gb_paper = QGroupBox("២. ទំហំក្រដាស / Paper Settings")
         gb_paper_layout = QVBoxLayout()
         gb_paper_layout.addWidget(QLabel("ទំហំក្រដាស / Size:"))
-        cb_paper_size = QComboBox()
-        cb_paper_size.addItem("A4 (210 x 297 mm)")
-        gb_paper_layout.addWidget(cb_paper_size)
+        self.cb_paper_size = QComboBox()
+        self.cb_paper_size.addItems([
+            "A4 (210 x 297 mm)",
+            "A3 (297 x 420 mm)",
+            "A5 (148 x 210 mm)",
+            "Letter (215.9 x 279.4 mm)",
+            "Custom size"
+        ])
+        gb_paper_layout.addWidget(self.cb_paper_size)
         
         h_size_layout = QHBoxLayout()
         v_width = QVBoxLayout()
@@ -118,17 +151,23 @@ class PhotoPrintApp(QMainWindow):
         self.sb_height.valueChanged.connect(self.calculate_layout)
         v_height.addWidget(self.sb_height)
         
+        self.cb_paper_size.currentIndexChanged.connect(self.change_paper_size)
+        self.sb_width.setEnabled(False)
+        self.sb_height.setEnabled(False)
+
         h_size_layout.addLayout(v_width)
         h_size_layout.addLayout(v_height)
         gb_paper_layout.addLayout(h_size_layout)
         
         gb_paper_layout.addWidget(QLabel("ទិសដៅ / Orientation:"))
         h_ori_layout = QHBoxLayout()
-        rb_port = QRadioButton("បញ្ឈរ / Port.")
-        rb_port.setChecked(True)
-        rb_land = QRadioButton("ផ្តេក / Land.")
-        h_ori_layout.addWidget(rb_port)
-        h_ori_layout.addWidget(rb_land)
+        self.rb_port = QRadioButton("បញ្ឈរ / Port.")
+        self.rb_port.setChecked(True)
+        self.rb_land = QRadioButton("ផ្តេក / Land.")
+        self.rb_port.toggled.connect(self.change_orientation)
+        
+        h_ori_layout.addWidget(self.rb_port)
+        h_ori_layout.addWidget(self.rb_land)
         gb_paper_layout.addLayout(h_ori_layout)
         gb_paper.setLayout(gb_paper_layout)
         left_layout.addWidget(gb_paper)
@@ -180,26 +219,52 @@ class PhotoPrintApp(QMainWindow):
         right_layout.setAlignment(Qt.AlignTop)
 
         # 4. គម្លាត និងគែម
-        gb_margin = QGroupBox("៤. គម្លាត និងគែម / Gaps Margins")
+        gb_margin = QGroupBox("៤. គម្លាត និងគែម / Margins & Gaps")
         gb_margin_layout = QVBoxLayout()
         
-        h_m_layout1 = QHBoxLayout()
-        h_m_layout1.addWidget(QLabel("គែមទំព័រ / Page Margin:"))
-        self.sb_margin = QSpinBox(); self.sb_margin.setValue(10); self.sb_margin.setSuffix(" mm")
-        self.sb_margin.valueChanged.connect(self.calculate_layout)
-        h_m_layout1.addWidget(self.sb_margin)
-        gb_margin_layout.addLayout(h_m_layout1)
-        gb_margin_layout.addWidget(QSlider(Qt.Horizontal))
+        grid_margin = QGridLayout()
         
-        h_m_layout2 = QHBoxLayout()
-        h_m_layout2.addWidget(QLabel("ចន្លោះរូបថត / Photo Gap:"))
+        grid_margin.addWidget(QLabel("លើ / Top:"), 0, 0)
+        self.sb_margin_top = QSpinBox(); self.sb_margin_top.setValue(10); self.sb_margin_top.setSuffix(" mm")
+        self.sb_margin_top.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_top, 0, 1)
+        
+        grid_margin.addWidget(QLabel("ក្រោម / Bottom:"), 0, 2)
+        self.sb_margin_bottom = QSpinBox(); self.sb_margin_bottom.setValue(10); self.sb_margin_bottom.setSuffix(" mm")
+        self.sb_margin_bottom.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_bottom, 0, 3)
+        
+        grid_margin.addWidget(QLabel("ឆ្វេង / Left:"), 1, 0)
+        self.sb_margin_left = QSpinBox(); self.sb_margin_left.setValue(10); self.sb_margin_left.setSuffix(" mm")
+        self.sb_margin_left.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_left, 1, 1)
+        
+        grid_margin.addWidget(QLabel("ស្តាំ / Right:"), 1, 2)
+        self.sb_margin_right = QSpinBox(); self.sb_margin_right.setValue(10); self.sb_margin_right.setSuffix(" mm")
+        self.sb_margin_right.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_right, 1, 3)
+        
+        gb_margin_layout.addLayout(grid_margin)
+        
+        h_gap_layout = QHBoxLayout()
+        h_gap_layout.addWidget(QLabel("ចន្លោះរូបថត / Photo Gap:"))
         self.sb_gap = QSpinBox(); self.sb_gap.setValue(2); self.sb_gap.setSuffix(" mm")
         self.sb_gap.valueChanged.connect(self.calculate_layout)
-        h_m_layout2.addWidget(self.sb_gap)
-        gb_margin_layout.addLayout(h_m_layout2)
-        gb_margin_layout.addWidget(QSlider(Qt.Horizontal))
+        h_gap_layout.addWidget(self.sb_gap)
+        gb_margin_layout.addLayout(h_gap_layout)
         
-        gb_margin_layout.addWidget(QCheckBox("បង្ហាញបន្ទាត់សម្រាប់កាត់ / Show Border Line"))
+        h_center_layout = QHBoxLayout()
+        self.chk_center_h = QCheckBox("តម្រឹមផ្ដេក / Auto Center H")
+        self.chk_center_v = QCheckBox("តម្រឹមបញ្ឈរ / Auto Center V")
+        self.chk_center_h.stateChanged.connect(self.toggle_auto_center)
+        self.chk_center_v.stateChanged.connect(self.toggle_auto_center)
+        h_center_layout.addWidget(self.chk_center_h)
+        h_center_layout.addWidget(self.chk_center_v)
+        gb_margin_layout.addLayout(h_center_layout)
+        
+        self.chk_show_border = QCheckBox("បង្ហាញបន្ទាត់សម្រាប់កាត់ / Show Border Line")
+        self.chk_show_border.stateChanged.connect(self.toggle_border)
+        gb_margin_layout.addWidget(self.chk_show_border)
         gb_margin.setLayout(gb_margin_layout)
         right_layout.addWidget(gb_margin)
 
@@ -250,6 +315,44 @@ class PhotoPrintApp(QMainWindow):
         # ធ្វើការគណនាបឋមនៅពេលចាប់ផ្តើមកម្មវិធី
         self.calculate_layout()
 
+    def change_paper_size(self):
+        size_text = self.cb_paper_size.currentText()
+        if "A4" in size_text:
+            self.sb_width.setValue(210.0)
+            self.sb_height.setValue(297.0)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        elif "A3" in size_text:
+            self.sb_width.setValue(297.0)
+            self.sb_height.setValue(420.0)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        elif "A5" in size_text:
+            self.sb_width.setValue(148.0)
+            self.sb_height.setValue(210.0)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        elif "Letter" in size_text:
+            self.sb_width.setValue(215.9)
+            self.sb_height.setValue(279.4)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        else: # Custom size
+            self.sb_width.setEnabled(True)
+            self.sb_height.setEnabled(True)
+            
+        self.change_orientation() # ពេលប្តូរក្រដាស ត្រូវពិនិត្យទិសដៅឡើងវិញ
+
+    def change_orientation(self):
+        w = self.sb_width.value()
+        h = self.sb_height.value()
+        if self.rb_port.isChecked() and w > h:
+            self.sb_width.setValue(h)
+            self.sb_height.setValue(w)
+        elif self.rb_land.isChecked() and h > w:
+            self.sb_width.setValue(h)
+            self.sb_height.setValue(w)
+
     def load_image(self):
         options = QFileDialog.Options()
         file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបភាព / Choose Photo", "", "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
@@ -258,16 +361,36 @@ class PhotoPrintApp(QMainWindow):
             self.preview_canvas.image_pixmap = QPixmap(file_name)
             self.preview_canvas.update()
             
+    def toggle_auto_center(self):
+        is_h = self.chk_center_h.isChecked()
+        self.sb_margin_left.setEnabled(not is_h)
+        self.sb_margin_right.setEnabled(not is_h)
+        
+        is_v = self.chk_center_v.isChecked()
+        self.sb_margin_top.setEnabled(not is_v)
+        self.sb_margin_bottom.setEnabled(not is_v)
+        
+        self.calculate_layout()
+        
+    def toggle_border(self):
+        self.preview_canvas.show_border = self.chk_show_border.isChecked()
+        self.preview_canvas.update()
+            
     def calculate_layout(self):
         paper_w = self.sb_width.value()
         paper_h = self.sb_height.value()
         photo_w = self.sb_p_width.value() * 10  # បំប្លែង cm ទៅ mm
         photo_h = self.sb_p_height.value() * 10 # បំប្លែង cm ទៅ mm
-        margin = self.sb_margin.value()
+        
+        margin_t = self.sb_margin_top.value()
+        margin_b = self.sb_margin_bottom.value()
+        margin_l = self.sb_margin_left.value()
+        margin_r = self.sb_margin_right.value()
+        
         gap = self.sb_gap.value()
         
-        avail_w = paper_w - (2 * margin)
-        avail_h = paper_h - (2 * margin)
+        avail_w = paper_w - (margin_l + margin_r)
+        avail_h = paper_h - (margin_t + margin_b)
         
         cols = int((avail_w + gap) // (photo_w + gap)) if photo_w > 0 else 0
         rows = int((avail_h + gap) // (photo_h + gap)) if photo_h > 0 else 0
@@ -275,11 +398,36 @@ class PhotoPrintApp(QMainWindow):
         if cols < 0: cols = 0
         if rows < 0: rows = 0
         
-        self.lbl_status.setText(f"<b>អាចដាក់បាន: {cols * rows} រូបភាព (បញ្ឈរ (Portrait))</b>")
+        offset_x = margin_l
+        offset_y = margin_t
+        
+        # អនុវត្តការតម្រឹមស្វ័យប្រវត្តិ (Auto Center)
+        if self.chk_center_h.isChecked() and cols > 0:
+            block_w = cols * photo_w + (cols - 1) * gap
+            offset_x = (paper_w - block_w) / 2.0
+            
+        if self.chk_center_v.isChecked() and rows > 0:
+            block_h = rows * photo_h + (rows - 1) * gap
+            offset_y = (paper_h - block_h) / 2.0
+        
+        ori_text = "បញ្ឈរ (Portrait)" if self.rb_port.isChecked() else "ផ្តេក (Landscape)"
+        self.lbl_status.setText(f"<b>អាចដាក់បាន: {cols * rows} រូបភាព ({ori_text})</b>")
         
         self.preview_canvas.cols = cols
         self.preview_canvas.rows = rows
-        self.preview_canvas.gap_px = gap * 2 # ប្រហាក់ប្រហែលសម្រាប់ការបង្ហាញប៉ុណ្ណោះ
+        self.preview_canvas.paper_w = paper_w
+        self.preview_canvas.paper_h = paper_h
+        self.preview_canvas.photo_w = photo_w
+        self.preview_canvas.photo_h = photo_h
+        
+        self.preview_canvas.margin_top = margin_t
+        self.preview_canvas.margin_bottom = margin_b
+        self.preview_canvas.margin_left = margin_l
+        self.preview_canvas.margin_right = margin_r
+        self.preview_canvas.offset_x = offset_x
+        self.preview_canvas.offset_y = offset_y
+        self.preview_canvas.gap = gap
+        
         self.preview_canvas.update()
 
 if __name__ == '__main__':
