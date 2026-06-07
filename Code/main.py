@@ -12,6 +12,7 @@ class PreviewWidget(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.setFocusPolicy(Qt.StrongFocus) # អនុញ្ញាតឲ្យ Widget នេះអាចចាប់យក Focus ពេល Click
         self.setMinimumSize(400, 500)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setStyleSheet("background-color: #dbe2e9;")
@@ -40,8 +41,6 @@ class PreviewWidget(QWidget):
         self.drag_offset_x = 0
         self.drag_offset_y = 0
         self.drag_start_mouse_pos = None
-        self.snap_to_grid = False
-        self.grid_size = 2.0  # ខ្នាត Snap (2mm)
 
         self.paper_width_px = 0
         self.paper_x_px = 0
@@ -80,66 +79,123 @@ class PreviewWidget(QWidget):
         for idx, item in enumerate(items_to_place):
             # item['w'] and item['h'] are the base dimensions from size_configs
             base_w, base_h = item['w'], item['h']
+            old = old_positions[idx] if idx < len(old_positions) else {}
+            old_angle = old.get('rotation_angle', 0)
             
-            # For packing, we consider both orientations of the base item
-            w_for_packing, h_for_packing = base_w, base_h
-            
-            # សាកល្បងដាក់ទាំងបញ្ឈរ និងផ្ដេក ដើម្បីរកវិធីដែលចំណេញកន្លែងបំផុត
-            fits_norm = (curr_x + w_for_packing <= avail_w + 0.1)
-            fits_rot = (curr_x + h_for_packing <= avail_w + 0.1)
-            
-            # បើមិនអាចដាក់ក្នុងជួរនេះបានទេ ចុះបន្ទាត់ថ្មី
-            if not fits_norm and not fits_rot:
-                curr_x = self.offset_x
-                curr_y += max_row_h + self.gap
-                max_row_h = 0
+            if self.is_manual:
+                if old_angle == 90 or old_angle == 270:
+                    cw, ch = base_h, base_w
+                else:
+                    cw, ch = base_w, base_h
+                    
+                if 'x' in old and 'y' in old:
+                    px, py = old['x'], old['y']
+                else:
+                    px, py = curr_x, curr_y
+                    curr_x += cw + self.gap
+                    max_row_h = max(max_row_h, ch)
+            else:
+                w_for_packing, h_for_packing = base_w, base_h
+                
                 fits_norm = (curr_x + w_for_packing <= avail_w + 0.1)
                 fits_rot = (curr_x + h_for_packing <= avail_w + 0.1)
-            
-            if not fits_norm and not fits_rot: break # អស់កន្លែងក្នុងក្រដាស
-            
-            # Determine the dimensions of the slot (cw, ch) and the initial visual rotation
-            cw, ch = 0, 0
-            
-            if fits_norm and fits_rot:
-                # Choose orientation that minimizes row height
-                cw, ch = (w_for_packing, h_for_packing) if h_for_packing <= w_for_packing else (h_for_packing, w_for_packing)
-            else:
-                cw, ch = (w_for_packing, h_for_packing) if fits_norm else (h_for_packing, w_for_packing)
+                
+                if not fits_norm and not fits_rot:
+                    curr_x = self.offset_x
+                    curr_y += max_row_h + self.gap
+                    max_row_h = 0
+                    fits_norm = (curr_x + w_for_packing <= avail_w + 0.1)
+                    fits_rot = (curr_x + h_for_packing <= avail_w + 0.1)
+                
+                if not fits_norm and not fits_rot: break
+                
+                is_rotated = False
+                if fits_norm:
+                    cw, ch = w_for_packing, h_for_packing
+                elif fits_rot and (h_for_packing <= max_row_h or curr_x == self.offset_x):
+                    cw, ch = h_for_packing, w_for_packing
+                    is_rotated = True
+                else:
+                    curr_x = self.offset_x
+                    curr_y += max_row_h + self.gap
+                    max_row_h = 0
+                    
+                    fits_norm = (curr_x + w_for_packing <= avail_w + 0.1)
+                    fits_rot = (curr_x + h_for_packing <= avail_w + 0.1)
+                    
+                    if not fits_norm and not fits_rot: break
+                    
+                    if fits_norm:
+                        cw, ch = w_for_packing, h_for_packing
+                    else:
+                        cw, ch = h_for_packing, w_for_packing
+                        is_rotated = True
 
-            if curr_y + ch > avail_h + 0.1: break
+                if curr_y + ch > avail_h + 0.1: break
 
-            old = old_positions[idx] if idx < len(old_positions) else {}
+                px, py = curr_x, curr_y
+                curr_x += cw + self.gap
+                max_row_h = max(max_row_h, ch)
+                
+                if is_rotated:
+                    old_angle = 90
+                else:
+                    old_angle = 0
+
             self.photo_positions.append({
-                'x': curr_x, 'y': curr_y,
+                'x': px, 'y': py,
                 'w': cw, 'h': ch, 'label': item['label'],
-                'original_w': old.get('original_w', base_w), # Store original item dimensions
-                'original_h': old.get('original_h', base_h),
-                'rotation_angle': old.get('rotation_angle', 0), # Preserve if exists, else 0
+                'original_w': base_w,
+                'original_h': base_h,
+                'rotation_angle': old_angle,
                 'scale': old.get('scale', 1.0),
                 'pan_x': old.get('pan_x', 0.0),
                 'pan_y': old.get('pan_y', 0.0),
                 'selected': old.get('selected', False),
                 'image_pixmap': old.get('image_pixmap', self.default_image_pixmap)
             })
-            curr_x += cw + self.gap
-            max_row_h = max(max_row_h, ch)
 
     def rotate_selected_photos(self):
-        """ បង្វិលរូបភាពដែលបានជ្រើសរើស (ប្តូរទទឹង និងកម្ពស់) """
+        """ បង្វិលរូបភាពដែលបានជ្រើសរើស (បង្វិលទាំងប្រអប់ជុំវិញចំណុចកណ្តាល) """
         for p in self.photo_positions:
             if p.get('selected', False):
                 current_angle = p.get('rotation_angle', 0)
                 new_angle = (current_angle + 90) % 360
                 p['rotation_angle'] = new_angle
                 
-                # Update the bounding box dimensions (w, h) based on the new rotation
-                # This ensures the slot itself rotates
-                if new_angle == 90 or new_angle == 270: # 90 or 270 degrees
-                    p['w'], p['h'] = p['original_h'], p['original_w']
-                else: # 0 or 180 degrees
-                    p['w'], p['h'] = p['original_w'], p['original_h']
+                cx = p['x'] + p['w'] / 2.0
+                cy = p['y'] + p['h'] / 2.0
+                
+                if new_angle == 90 or new_angle == 270:
+                    p['w'], p['h'] = p['h'], p['w']
+                else:
+                    p['w'], p['h'] = p['h'], p['w']
+                    
+                p['x'] = cx - p['w'] / 2.0
+                p['y'] = cy - p['h'] / 2.0
         self.update()
+
+    def nudge_selected_photos(self, dx_mm, dy_mm):
+        """ រំកិលរូបភាពដែលបានជ្រើសរើសតាមចម្ងាយ x និង y (គិតជា mm) """
+        moved = False
+        for p in self.photo_positions:
+            if p.get('selected', False):
+                p['x'] += dx_mm
+                p['y'] += dy_mm
+                moved = True
+        if moved:
+            self.update()
+
+    def pan_selected_photos(self, dx_px, dy_px):
+        """ រំកិលសាច់រូបភាព (Crop) ខាងក្នុងប្រអប់ (Pan) """
+        moved = False
+        for p in self.photo_positions:
+            if p.get('selected', False):
+                p['pan_x'] = p.get('pan_x', 0.0) + dx_px
+                p['pan_y'] = p.get('pan_y', 0.0) + dy_px
+                moved = True
+        if moved:
+            self.update()
 
     def align_selected_left(self):
         """ តម្រឹមរូបភាពដែលបានជ្រើសរើសទៅខាងឆ្វេងបំផុតនៃក្រុម """
@@ -201,6 +257,50 @@ class PreviewWidget(QWidget):
             curr_y += p['h'] + gap
         self.update()
 
+    def center_horizontally(self):
+        """ តម្រឹមរូបភាពកណ្តាលតាមផ្ដេក (Center Horizontally) ធៀបនឹងក្រដាស និង Margin """
+        selected = [p for p in self.photo_positions if p.get('selected')]
+        if not selected:
+            selected = self.photo_positions # បើមិនមាន Select ទេ គឺរាប់ទាំងអស់
+        if not selected: return
+        
+        min_x = min(p['x'] for p in selected)
+        max_right = max(p['x'] + p['w'] for p in selected)
+        group_width = max_right - min_x
+        
+        # គណនាចំណុចកណ្តាលនៃក្រដាស ដោយគិត Margin
+        avail_width = self.paper_w - self.margin_left - self.margin_right
+        paper_center_x = self.margin_left + avail_width / 2.0
+        
+        group_center_x = min_x + group_width / 2.0
+        shift_x = paper_center_x - group_center_x
+        
+        for p in selected:
+            p['x'] += shift_x
+        self.update()
+
+    def center_vertically(self):
+        """ តម្រឹមរូបភាពកណ្តាលតាមបញ្ឈរ (Center Vertically) ធៀបនឹងក្រដាស និង Margin """
+        selected = [p for p in self.photo_positions if p.get('selected')]
+        if not selected:
+            selected = self.photo_positions # បើមិនមាន Select ទេ គឺរាប់ទាំងអស់
+        if not selected: return
+        
+        min_y = min(p['y'] for p in selected)
+        max_bottom = max(p['y'] + p['h'] for p in selected)
+        group_height = max_bottom - min_y
+        
+        # គណនាចំណុចកណ្តាលនៃក្រដាស ដោយគិត Margin
+        avail_height = self.paper_h - self.margin_top - self.margin_bottom
+        paper_center_y = self.margin_top + avail_height / 2.0
+        
+        group_center_y = min_y + group_height / 2.0
+        shift_y = paper_center_y - group_center_y
+        
+        for p in selected:
+            p['y'] += shift_y
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -231,22 +331,22 @@ class PreviewWidget(QWidget):
         # ខ្នាតសមាមាត្រពី មីលីម៉ែត្រ ទៅ ភីកសែល (px/mm)
         scale = paper_width / self.paper_w if self.paper_w > 0 else 1
         
-        # -------------------------------------------------------------
-        # គូរបន្ទាត់ Grid ជំនួយ (Visual Grid) បើបើក Snap
-        # -------------------------------------------------------------
-        if self.snap_to_grid:
-            grid_pen = QPen(QColor(200, 200, 200, 150), 0.5, Qt.DotLine)
-            painter.setPen(grid_pen)
-            x_grid = 0
-            while x_grid <= self.paper_w:
-                vx = paper_x + x_grid * scale
-                painter.drawLine(int(vx), int(paper_y), int(vx), int(paper_y + paper_height))
-                x_grid += self.grid_size
-            y_grid = 0
-            while y_grid <= self.paper_h:
-                vy = paper_y + y_grid * scale
-                painter.drawLine(int(paper_x), int(vy), int(paper_x + paper_width), int(vy))
-                y_grid += self.grid_size
+        # គូរបន្ទាត់ Margin (Margin Guidelines) ជាបន្ទាត់ដាច់ៗពណ៌ក្រហមស្រាល
+        margin_pen = QPen(QColor(255, 50, 50, 120), 1, Qt.DashLine)
+        painter.setPen(margin_pen)
+        
+        m_top = paper_y + self.margin_top * scale
+        m_bottom = paper_y + (self.paper_h - self.margin_bottom) * scale
+        m_left = paper_x + self.margin_left * scale
+        m_right = paper_x + (self.paper_w - self.margin_right) * scale
+        
+        # បន្ទាត់ផ្តេក (Top / Bottom)
+        painter.drawLine(int(paper_x), int(m_top), int(paper_x + paper_width), int(m_top))
+        painter.drawLine(int(paper_x), int(m_bottom), int(paper_x + paper_width), int(m_bottom))
+        
+        # បន្ទាត់បញ្ឈរ (Left / Right)
+        painter.drawLine(int(m_left), int(paper_y), int(m_left), int(paper_y + paper_height))
+        painter.drawLine(int(m_right), int(paper_y), int(m_right), int(paper_y + paper_height))
 
         # គូរក្រឡារូបថតតូចៗ (3x4 cm ឧទាហរណ៍)
         pen = QPen(QColor(200, 200, 200), 1, Qt.SolidLine)
@@ -273,6 +373,20 @@ class PreviewWidget(QWidget):
             pre_scaled_contain = None
 
             if current_pixmap and not current_pixmap.isNull():
+                # បង្វិលរូបភាពតាមការកំណត់ដោយដៃ (ចុច R) ៩០, ១៨០, ២៧០ ដឺក្រេ
+                manual_angle = pos.get('rotation_angle', 0)
+                if manual_angle != 0:
+                    transform = QTransform().rotate(manual_angle)
+                    current_pixmap = current_pixmap.transformed(transform, Qt.SmoothTransformation)
+
+                if self.optimize_fit:
+                    img_w, img_h = current_pixmap.width(), current_pixmap.height()
+                    # បង្វិលរូបភាពបើទិសដៅមិនត្រូវគ្នា (ផ្ដេក/បញ្ឈរ)
+                    if img_w != img_h and cell_w != cell_h:
+                        if (img_w > img_h) != (cell_w > cell_h):
+                            transform = QTransform().rotate(90)
+                            current_pixmap = current_pixmap.transformed(transform, Qt.SmoothTransformation)
+
                 if self.image_mode == 'cover':
                     pre_scaled_cover = current_pixmap.scaled(tw, th, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
                 elif self.image_mode == 'contain':
@@ -344,6 +458,7 @@ class PreviewWidget(QWidget):
 
 
     def mousePressEvent(self, event):
+        self.setFocus() # ចាប់យក Focus ពេលចុចលើរូបភាព ដើម្បីការពារកុំឲ្យ Arrow Key រត់ទៅ RadioButton
         scale = self.paper_width_px / self.paper_w if self.paper_w > 0 else 1        
         click_x = event.x()
         click_y = event.y()
@@ -436,10 +551,6 @@ class PreviewWidget(QWidget):
                 if p.get('selected', False) and 'drag_start_x' in p:
                     new_x = p['drag_start_x'] + dx_mm
                     new_y = p['drag_start_y'] + dy_mm
-                    
-                    if self.snap_to_grid:
-                        new_x = round(new_x / self.grid_size) * self.grid_size
-                        new_y = round(new_y / self.grid_size) * self.grid_size
                         
                     p['x'] = new_x
                     p['y'] = new_y
@@ -527,6 +638,10 @@ class PhotoPrintApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("កម្មវិធីជំនួយការបោះពុម្ពរូបថត - Photo Print Studio")
         self.default_image_pixmap = None # Added default image pixmap
+        from PyQt5.QtCore import QSettings
+        self.settings = QSettings("PhotoPrintApp", "Settings")
+        self.default_pdf_folder = self.settings.value("default_pdf_folder", "")
+        self.foxit_path = self.settings.value("foxit_path", "")
         self.resize(1366, 768)
         self.showMaximized()
         self.initUI()
@@ -537,6 +652,9 @@ class PhotoPrintApp(QMainWindow):
         self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
         main_layout.setContentsMargins(10, 10, 10, 10)
+
+        # បង្កើត Preview Canvas ជាមុនសិន ដើម្បីឲ្យ Panel ផ្សេងៗអាចភ្ជាប់ (connect) ទៅវាបាន
+        self.preview_canvas = PreviewWidget()
 
         # ---------------- LEFT PANEL ----------------
         left_panel = QWidget()
@@ -570,7 +688,9 @@ class PhotoPrintApp(QMainWindow):
             "A3 (297 x 420 mm)",
             "A5 (148 x 210 mm)",
             "Letter (215.9 x 279.4 mm)",
-            "Custom size"
+            "ក្រដាសរូបថត (10x15 cm)",
+            "ក្រដាសរូបថត (13x18 cm)",
+            "Custom size / ទំហំតាមតម្រូវការ"
         ])
         gb_paper_layout.addWidget(self.cb_paper_size)
         
@@ -615,6 +735,7 @@ class PhotoPrintApp(QMainWindow):
         gb_preset_layout.addWidget(QLabel("ខ្នាត / Unit:"))
         self.cb_p_unit = QComboBox()
         self.cb_p_unit.addItems(["cm", "mm", "inch", "pixel"])
+        self.cb_p_unit.setCurrentIndex(1) # Default to mm
         self.cb_p_unit.currentIndexChanged.connect(self.calculate_layout)
         gb_preset_layout.addWidget(self.cb_p_unit)
 
@@ -631,12 +752,13 @@ class PhotoPrintApp(QMainWindow):
 
         # បង្កើតជម្រើស ៣ ទំហំ
         self.size_groups = []
+        default_sizes = [(35.0, 45.0), (27.0, 35.0), (55.5, 88.0)]
         for i in range(3):
             row_layout = QHBoxLayout()
             chk = QCheckBox(f"ទំហំ {i+1}"); chk.setChecked(i==0)
             chk.stateChanged.connect(self.calculate_layout)
-            sb_w = QDoubleSpinBox(); sb_w.setValue(3.0 + i); sb_w.setMaximum(5000)
-            sb_h = QDoubleSpinBox(); sb_h.setValue(4.0 + i); sb_h.setMaximum(5000)
+            sb_w = QDoubleSpinBox(); sb_w.setValue(default_sizes[i][0]); sb_w.setMaximum(5000)
+            sb_h = QDoubleSpinBox(); sb_h.setValue(default_sizes[i][1]); sb_h.setMaximum(5000)
             sb_q = QSpinBox(); sb_q.setValue(4 if i==0 else 0); sb_q.setMaximum(1000)
             
             sb_w.valueChanged.connect(self.calculate_layout)
@@ -658,81 +780,14 @@ class PhotoPrintApp(QMainWindow):
         gb_preset_layout.addWidget(self.btn_reverse_p_size)
         
         self.chk_optimize_fit = QCheckBox("ស្វែងរកប្រព័ន្ធសម្រួលភាពស័ក្ដិសម / Optimize Fit")
+        self.chk_optimize_fit.setChecked(True)
         self.chk_optimize_fit.stateChanged.connect(self.calculate_layout)
         gb_preset_layout.addWidget(self.chk_optimize_fit)
         gb_preset.setLayout(gb_preset_layout)
         left_layout.addWidget(gb_preset)
 
-        # ---------------- MIDDLE PANEL ----------------
-        mid_panel = QWidget()
-        mid_layout = QVBoxLayout(mid_panel)
-        mid_title = QLabel("<b>ទិដ្ឋភាពបង្ហាញជាក់ស្តែង / LIVE PRINT PREVIEW</b>")
-        mid_title.setAlignment(Qt.AlignCenter)
-        mid_title.setFont(QFont("Khmer OS Battambang", 11))
-        mid_layout.addWidget(mid_title)
-        
-        self.preview_canvas = PreviewWidget()
-        self.preview_canvas.selectionChanged.connect(self.update_image_adjustment_buttons)
-        mid_layout.addWidget(self.preview_canvas)
-
-        # ---------------- RIGHT PANEL ----------------
-        right_panel = QWidget()
-        right_panel.setFixedWidth(320)
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setAlignment(Qt.AlignTop)
-
-        # 4. គម្លាត និងគែម
-        gb_margin = QGroupBox("៤. គម្លាត និងគែម / Margins & Gaps")
-        gb_margin_layout = QVBoxLayout()
-        
-        grid_margin = QGridLayout()
-        
-        grid_margin.addWidget(QLabel("លើ / Top:"), 0, 0)
-        self.sb_margin_top = QSpinBox(); self.sb_margin_top.setValue(10); self.sb_margin_top.setSuffix(" mm")
-        self.sb_margin_top.valueChanged.connect(self.calculate_layout)
-        grid_margin.addWidget(self.sb_margin_top, 0, 1)
-        
-        grid_margin.addWidget(QLabel("ក្រោម / Bottom:"), 0, 2)
-        self.sb_margin_bottom = QSpinBox(); self.sb_margin_bottom.setValue(10); self.sb_margin_bottom.setSuffix(" mm")
-        self.sb_margin_bottom.valueChanged.connect(self.calculate_layout)
-        grid_margin.addWidget(self.sb_margin_bottom, 0, 3)
-        
-        grid_margin.addWidget(QLabel("ឆ្វេង / Left:"), 1, 0)
-        self.sb_margin_left = QSpinBox(); self.sb_margin_left.setValue(10); self.sb_margin_left.setSuffix(" mm")
-        self.sb_margin_left.valueChanged.connect(self.calculate_layout)
-        grid_margin.addWidget(self.sb_margin_left, 1, 1)
-        
-        grid_margin.addWidget(QLabel("ស្តាំ / Right:"), 1, 2)
-        self.sb_margin_right = QSpinBox(); self.sb_margin_right.setValue(10); self.sb_margin_right.setSuffix(" mm")
-        self.sb_margin_right.valueChanged.connect(self.calculate_layout)
-        grid_margin.addWidget(self.sb_margin_right, 1, 3)
-        
-        gb_margin_layout.addLayout(grid_margin)
-        
-        h_gap_layout = QHBoxLayout()
-        h_gap_layout.addWidget(QLabel("ចន្លោះរូបថត / Photo Gap:"))
-        self.sb_gap = QSpinBox(); self.sb_gap.setValue(2); self.sb_gap.setSuffix(" mm")
-        self.sb_gap.valueChanged.connect(self.calculate_layout)
-        h_gap_layout.addWidget(self.sb_gap)
-        gb_margin_layout.addLayout(h_gap_layout)
-        
-        h_center_layout = QHBoxLayout()
-        self.chk_center_h = QCheckBox("តម្រឹមផ្ដេក / Auto Center H")
-        self.chk_center_v = QCheckBox("តម្រឹមបញ្ឈរ / Auto Center V")
-        self.chk_center_h.stateChanged.connect(self.toggle_auto_center)
-        self.chk_center_v.stateChanged.connect(self.toggle_auto_center)
-        h_center_layout.addWidget(self.chk_center_h)
-        h_center_layout.addWidget(self.chk_center_v)
-        gb_margin_layout.addLayout(h_center_layout)
-        
-        self.chk_show_border = QCheckBox("បង្ហាញបន្ទាត់សម្រាប់កាត់ / Show Border Line")
-        self.chk_show_border.stateChanged.connect(self.toggle_border)
-        gb_margin_layout.addWidget(self.chk_show_border)
-        gb_margin.setLayout(gb_margin_layout)
-        right_layout.addWidget(gb_margin)
-
-        # 5. ការរៀបចំ និងចំនួន
-        gb_layout = QGroupBox("៥. ការរៀបចំ និងចំនួន / Layout Qty")
+        # 4. ការរៀបចំ និងចំនួន
+        gb_layout = QGroupBox("៤. ការរៀបចំ និងចំនួន / Layout Qty")
         gb_layout_layout = QVBoxLayout()
         self.rb_max_qty = QRadioButton("ពេញក្រដាស / Max Printable (Auto)")
         self.rb_max_qty.setChecked(True)
@@ -741,11 +796,6 @@ class PhotoPrintApp(QMainWindow):
         
         self.rb_manual_layout = QRadioButton("រៀបចំដោយសេរី / Manual Layout (Drag)")
         gb_layout_layout.addWidget(self.rb_manual_layout)
-        
-        self.chk_snap = QCheckBox("តម្រឹមតាមក្រឡា / Snap to Grid (2mm)")
-        self.chk_snap.setVisible(False)
-        self.chk_snap.stateChanged.connect(self.toggle_snap)
-        gb_layout_layout.addWidget(self.chk_snap)
 
         # ប៊ូតុងតម្រឹម និងរៀបចំ (Alignment & Distribution Buttons)
         self.wg_align = QWidget()
@@ -780,7 +830,76 @@ class PhotoPrintApp(QMainWindow):
         gb_layout_layout.addWidget(self.lbl_manual_tip)
         self.rb_manual_layout.toggled.connect(self.toggle_manual_mode) # Connect ក្រោយពេលបង្កើត Tip រួច
         gb_layout.setLayout(gb_layout_layout)
-        right_layout.addWidget(gb_layout)
+        left_layout.addWidget(gb_layout)
+
+        # ---------------- MIDDLE PANEL ----------------
+        mid_panel = QWidget()
+        mid_layout = QVBoxLayout(mid_panel)
+        mid_title = QLabel("<b>ទិដ្ឋភាពបង្ហាញជាក់ស្តែង / LIVE PRINT PREVIEW</b>")
+        mid_title.setAlignment(Qt.AlignCenter)
+        mid_title.setFont(QFont("Khmer OS Battambang", 11))
+        mid_layout.addWidget(mid_title)
+        
+        self.preview_canvas.selectionChanged.connect(self.update_image_adjustment_buttons)
+        mid_layout.addWidget(self.preview_canvas)
+
+        # ---------------- RIGHT PANEL ----------------
+        right_panel = QWidget()
+        right_panel.setFixedWidth(320)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setAlignment(Qt.AlignTop)
+
+        # 5. គម្លាត និងគែម
+        gb_margin = QGroupBox("៥. គម្លាត និងគែម / Margins & Gaps")
+        gb_margin_layout = QVBoxLayout()
+        
+        grid_margin = QGridLayout()
+        
+        grid_margin.addWidget(QLabel("លើ / Top:"), 0, 0)
+        self.sb_margin_top = QSpinBox(); self.sb_margin_top.setValue(0); self.sb_margin_top.setSuffix(" mm")
+        self.sb_margin_top.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_top, 0, 1)
+        
+        grid_margin.addWidget(QLabel("ក្រោម / Bottom:"), 0, 2)
+        self.sb_margin_bottom = QSpinBox(); self.sb_margin_bottom.setValue(0); self.sb_margin_bottom.setSuffix(" mm")
+        self.sb_margin_bottom.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_bottom, 0, 3)
+        
+        grid_margin.addWidget(QLabel("ឆ្វេង / Left:"), 1, 0)
+        self.sb_margin_left = QSpinBox(); self.sb_margin_left.setValue(0); self.sb_margin_left.setSuffix(" mm")
+        self.sb_margin_left.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_left, 1, 1)
+        
+        grid_margin.addWidget(QLabel("ស្តាំ / Right:"), 1, 2)
+        self.sb_margin_right = QSpinBox(); self.sb_margin_right.setValue(0); self.sb_margin_right.setSuffix(" mm")
+        self.sb_margin_right.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_right, 1, 3)
+        
+        gb_margin_layout.addLayout(grid_margin)
+        
+        h_gap_layout = QHBoxLayout()
+        h_gap_layout.addWidget(QLabel("ចន្លោះរូបថត / Photo Gap:"))
+        self.sb_gap = QSpinBox(); self.sb_gap.setValue(2); self.sb_gap.setSuffix(" mm")
+        self.sb_gap.valueChanged.connect(self.calculate_layout)
+        h_gap_layout.addWidget(self.sb_gap)
+        gb_margin_layout.addLayout(h_gap_layout)
+        
+        h_center_layout = QHBoxLayout()
+        self.chk_center_h = QCheckBox("តម្រឹមផ្ដេក / Auto Center H")
+        self.chk_center_h.setChecked(True)
+        self.chk_center_v = QCheckBox("តម្រឹមបញ្ឈរ / Auto Center V")
+        self.chk_center_v.setChecked(True)
+        self.chk_center_h.stateChanged.connect(self.toggle_auto_center)
+        self.chk_center_v.stateChanged.connect(self.toggle_auto_center)
+        h_center_layout.addWidget(self.chk_center_h)
+        h_center_layout.addWidget(self.chk_center_v)
+        gb_margin_layout.addLayout(h_center_layout)
+        
+        self.chk_show_border = QCheckBox("បង្ហាញបន្ទាត់សម្រាប់កាត់ / Show Border Line")
+        self.chk_show_border.stateChanged.connect(self.toggle_border)
+        gb_margin_layout.addWidget(self.chk_show_border)
+        gb_margin.setLayout(gb_margin_layout)
+        right_layout.addWidget(gb_margin)
 
         # 6. ការកំណត់រូបភាព / Image properties
         gb_img_prop = QGroupBox("៦. ការកំណត់រូបភាព / Image properties")
@@ -794,7 +913,7 @@ class PhotoPrintApp(QMainWindow):
         self.bg_img_mode.addButton(self.rb_img_cover)
         self.bg_img_mode.addButton(self.rb_img_contain)
         
-        self.lbl_cover_tip = QLabel("<i>💡 ពេលកាត់ (Cover): ចុចម៉ៅស៍ឆ្វេងហើយទាញ (Drag) លើរូបដើម្បីរំកិល<br>និង Scroll ម៉ៅស៍ ដើម្បីពង្រីក/ពង្រួមរូប។</i>")
+        self.lbl_cover_tip = QLabel("<i>💡 ពេលកាត់ (Cover): ចុច Shift + ម៉ៅស៍ឆ្វេង ហើយទាញ (Drag) លើរូបដើម្បីរំកិល<br>និង Shift + Scroll ម៉ៅស៍ ដើម្បីពង្រីក/ពង្រួមរូប។</i>")
         self.lbl_cover_tip.setStyleSheet("color: #d97706; font-size: 11px;")
         self.lbl_cover_tip.setVisible(False)
         
@@ -852,16 +971,28 @@ class PhotoPrintApp(QMainWindow):
         self.lbl_status.setStyleSheet("color: #16947b;")
         right_layout.addWidget(self.lbl_status)
 
+        h_save_layout = QHBoxLayout()
         btn_save_pdf = QPushButton("រក្សាទុក PDF / Save PDF")
         btn_save_pdf.setStyleSheet("background-color: #128c7e; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
+        btn_save_pdf.clicked.connect(self.save_pdf)
         
-        btn_print = QPushButton("បោះពុម្ព / Print")
+        btn_settings = QPushButton("⚙")
+        btn_settings.setToolTip("កំណត់ទីតាំងរក្សាទុក PDF / Set PDF Save Folder")
+        btn_settings.setStyleSheet("background-color: #64748b; color: white; padding: 12px; font-weight: bold; border-radius: 5px; font-size: 16px;")
+        btn_settings.setFixedWidth(50)
+        btn_settings.clicked.connect(self.open_settings)
+        
+        h_save_layout.addWidget(btn_save_pdf)
+        h_save_layout.addWidget(btn_settings)
+        
+        btn_print = QPushButton("បញ្ចូនទៅ Foxit PDF/ Import to Foxit")
         btn_print.setStyleSheet("background-color: #5850ec; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
+        btn_print.clicked.connect(self.import_to_foxit)
         
-        btn_support = QPushButton("ឧបត្ថម្ភ / Support Creator")
-        btn_support.setStyleSheet("background-color: #f59e0b; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
+        btn_support = QLabel("សរសេរដោយ៖ ដែកូដថ្មី Ver.1.0.2")
+        btn_support.setStyleSheet(" color: green ; padding: 12px; font-weight: bold; border-radius: 5px;")
 
-        right_layout.addWidget(btn_save_pdf)
+        right_layout.addLayout(h_save_layout)
         right_layout.addWidget(btn_print)
         right_layout.addWidget(btn_support)
 
@@ -878,6 +1009,29 @@ class PhotoPrintApp(QMainWindow):
             self.clear_selected_image()
         elif event.key() == Qt.Key_R:
             self.preview_canvas.rotate_selected_photos()
+        elif event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
+            if event.modifiers() & Qt.ControlModifier:
+                # ប្រើ Ctrl + Arrow សម្រាប់រំកិលសាច់រូបភាព (Pan inside Cover mode)
+                step = 20 if (event.modifiers() & Qt.ShiftModifier) else 5
+                if event.key() == Qt.Key_Up:
+                    self.preview_canvas.pan_selected_photos(0, -step)
+                elif event.key() == Qt.Key_Down:
+                    self.preview_canvas.pan_selected_photos(0, step)
+                elif event.key() == Qt.Key_Left:
+                    self.preview_canvas.pan_selected_photos(-step, 0)
+                elif event.key() == Qt.Key_Right:
+                    self.preview_canvas.pan_selected_photos(step, 0)
+            else:
+                # ប្រើ Arrow ធម្មតា សម្រាប់រំកិលប្រអប់រូបភាពនៅលើក្រដាស
+                step = 5.0 if (event.modifiers() & Qt.ShiftModifier) else 0.5
+                if event.key() == Qt.Key_Up:
+                    self.preview_canvas.nudge_selected_photos(0, -step)
+                elif event.key() == Qt.Key_Down:
+                    self.preview_canvas.nudge_selected_photos(0, step)
+                elif event.key() == Qt.Key_Left:
+                    self.preview_canvas.nudge_selected_photos(-step, 0)
+                elif event.key() == Qt.Key_Right:
+                    self.preview_canvas.nudge_selected_photos(step, 0)
         else:
             super().keyPressEvent(event)
 
@@ -903,6 +1057,16 @@ class PhotoPrintApp(QMainWindow):
             self.sb_height.setValue(279.4)
             self.sb_width.setEnabled(False)
             self.sb_height.setEnabled(False)
+        elif "10x15" in size_text:
+            self.sb_width.setValue(100.0)
+            self.sb_height.setValue(150.0)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        elif "13x18" in size_text:
+            self.sb_width.setValue(130.0)
+            self.sb_height.setValue(180.0)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
         else: # Custom size
             self.sb_width.setEnabled(True)
             self.sb_height.setEnabled(True)
@@ -920,10 +1084,11 @@ class PhotoPrintApp(QMainWindow):
             self.sb_height.setValue(w)
 
     def reverse_photo_size(self):
-        w = self.sb_p_width.value()
-        h = self.sb_p_height.value()
-        self.sb_p_width.setValue(h)
-        self.sb_p_height.setValue(w)
+        for g in self.size_groups:
+            w = g['w'].value()
+            h = g['h'].value()
+            g['w'].setValue(h)
+            g['h'].setValue(w)
 
     def load_image(self):
         options = QFileDialog.Options()
@@ -978,14 +1143,9 @@ class PhotoPrintApp(QMainWindow):
     def toggle_manual_mode(self):
         is_manual = self.rb_manual_layout.isChecked()
         self.lbl_manual_tip.setVisible(is_manual)
-        self.chk_snap.setVisible(is_manual)
         self.wg_align.setVisible(is_manual)
         self.preview_canvas.is_manual = is_manual
         self.calculate_layout()
-
-    def toggle_snap(self):
-        self.preview_canvas.snap_to_grid = self.chk_snap.isChecked()
-        self.preview_canvas.update()
         
     def change_image_mode(self):
         is_cover = self.rb_img_cover.isChecked()
@@ -1114,21 +1274,10 @@ class PhotoPrintApp(QMainWindow):
         # សម្រាប់របៀបរៀបចំថ្មី យើងប្រើការគណនាប្លង់ឆ្លាតវៃ (Smart Packing)
         # យើងនឹងព្យាយាមរកចំនួនអតិបរមា ប្រសិនបើអ្នកប្រើរើសយក "Max Printable"
         if self.rb_max_qty.isChecked() and len(active_configs) == 1:
-            # បើមានតែមួយទំហំ យើងអាចស្មានចំនួនអតិបរមាបានដោយការបង្វិល
-            c1 = int((avail_w + gap) // (photo_w + gap)) * int((avail_h + gap) // (photo_h + gap))
-            c2 = int((avail_w + gap) // (photo_h + gap)) * int((avail_h + gap) // (photo_w + gap))
-            max_possible = max(c1, c2)
-            if active_configs[0]['qty'] < max_possible:
-                active_configs[0]['qty'] = max_possible
-                total_print_qty = max_possible
+            active_configs[0]['qty'] = 1000 # ដាក់ចំនួនធំដើម្បីឲ្យកូដរៀបចំទាល់តែពេញ
 
         offset_x, offset_y = margin_l, margin_t
 
-        # អនុវត្តការតម្រឹមស្វ័យប្រវត្តិ (Auto Center)
-        ori_text = "បញ្ឈរ (Portrait)" if self.rb_port.isChecked() else "ផ្តេក (Landscape)"
-        self.lbl_status.setText(f"<b>ចំនួនសរុប: {total_print_qty} រូបភាព ({ori_text})</b>")
-
-        self.preview_canvas.print_qty = total_print_qty
         self.preview_canvas.paper_w = paper_w
         self.preview_canvas.paper_h = paper_h
         self.preview_canvas.photo_w = photo_w
@@ -1146,17 +1295,250 @@ class PhotoPrintApp(QMainWindow):
         
         # ឥឡូវនេះ មុខងារ Manual Layout ប្រើប្រាស់ប្រព័ន្ធរៀបចំប្លង់ស្វ័យប្រវត្តិ (Optimize Fit) ជាមូលដ្ឋាន
         self.preview_canvas.generate_grid(active_configs)
+        
+        if self.rb_max_qty.isChecked() and len(active_configs) == 1:
+            total_print_qty = len(self.preview_canvas.photo_positions)
+            active_configs[0]['qty'] = total_print_qty
+            
+        self.preview_canvas.print_qty = total_print_qty
+        
+        ori_text = "បញ្ឈរ (Portrait)" if self.rb_port.isChecked() else "ផ្តេក (Landscape)"
+        self.lbl_status.setText(f"<b>ចំនួនសរុប: {total_print_qty} រូបភាព ({ori_text})</b>")
+        
+        # អនុវត្តការតម្រឹមស្វ័យប្រវត្តិពីចំណុចទី៥ (Auto Center)
+        if self.chk_center_h.isChecked():
+            self.preview_canvas.center_horizontally()
+        if self.chk_center_v.isChecked():
+            self.preview_canvas.center_vertically()
+            
         self.update_image_adjustment_buttons()
                 
         self.preview_canvas.update()
 
+    def open_settings(self):
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout
+        dialog = QDialog(self)
+        dialog.setWindowTitle("ការកំណត់ / Settings")
+        dialog.resize(400, 150)
+        
+        layout = QVBoxLayout(dialog)
+        
+        layout.addWidget(QLabel("ទីតាំងរក្សាទុក PDF លំនាំដើម / Default PDF Save Folder:"))
+        
+        h_layout = QHBoxLayout()
+        txt_folder = QLineEdit(self.default_pdf_folder if hasattr(self, 'default_pdf_folder') else "")
+        txt_folder.setReadOnly(True)
+        h_layout.addWidget(txt_folder)
+        
+        btn_browse = QPushButton("ជ្រើសរើស / Browse")
+        def browse_folder():
+            folder = QFileDialog.getExistingDirectory(dialog, "ជ្រើសរើសថតឯកសារ / Select Folder", txt_folder.text())
+            if folder:
+                txt_folder.setText(folder)
+        btn_browse.clicked.connect(browse_folder)
+        h_layout.addWidget(btn_browse)
+        
+        layout.addLayout(h_layout)
+        
+        layout.addWidget(QLabel("ទីតាំងកម្មវិធី Foxit PDF / Foxit PDF Path:"))
+        
+        h_foxit_layout = QHBoxLayout()
+        txt_foxit = QLineEdit(self.foxit_path if hasattr(self, 'foxit_path') else "")
+        txt_foxit.setReadOnly(True)
+        h_foxit_layout.addWidget(txt_foxit)
+        
+        btn_browse_foxit = QPushButton("ជ្រើសរើស / Browse")
+        def browse_foxit():
+            exe_file, _ = QFileDialog.getOpenFileName(dialog, "ជ្រើសរើសកម្មវិធី Foxit / Select Foxit App", "", "Executables (*.exe)")
+            if exe_file:
+                txt_foxit.setText(exe_file)
+        btn_browse_foxit.clicked.connect(browse_foxit)
+        h_foxit_layout.addWidget(btn_browse_foxit)
+        
+        layout.addLayout(h_foxit_layout)
+
+        btn_layout = QHBoxLayout()
+        btn_save = QPushButton("រក្សាទុក / Save")
+        def save_settings():
+            self.default_pdf_folder = txt_folder.text()
+            self.settings.setValue("default_pdf_folder", self.default_pdf_folder)
+            self.foxit_path = txt_foxit.text()
+            self.settings.setValue("foxit_path", self.foxit_path)
+            dialog.accept()
+        btn_save.clicked.connect(save_settings)
+        btn_save.setStyleSheet("background-color: #128c7e; color: white; padding: 8px; font-weight: bold; border-radius: 4px;")
+        
+        btn_cancel = QPushButton("បោះបង់ / Cancel")
+        btn_cancel.clicked.connect(dialog.reject)
+        btn_cancel.setStyleSheet("background-color: #ef4444; color: white; padding: 8px; font-weight: bold; border-radius: 4px;")
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_save)
+        
+        layout.addLayout(btn_layout)
+        dialog.exec_()
+
+    def import_to_foxit(self):
+        import subprocess
+        from PyQt5.QtWidgets import QMessageBox
+        import os
+        
+        if not hasattr(self, 'foxit_path') or not self.foxit_path or not os.path.exists(self.foxit_path):
+            QMessageBox.warning(self, "មិនទាន់កំណត់កម្មវិធី / Not Configured", "សូមចូលទៅកាន់ Settings (⚙) ដើម្បីកំណត់ទីតាំងកម្មវិធី Foxit PDF ជាមុនសិន។")
+            return
+            
+        file_name = self.save_pdf(show_msg=False)
+        if file_name:
+            try:
+                subprocess.Popen([self.foxit_path, file_name])
+            except Exception as e:
+                QMessageBox.critical(self, "កំហុស / Error", f"មិនអាចបើកកម្មវិធី Foxit PDF បានទេ:\n{str(e)}")
+
+    def save_pdf(self, show_msg=True):
+        from PyQt5.QtWidgets import QMessageBox
+        import os
+        from datetime import datetime
+        
+        file_name = ""
+        
+        if hasattr(self, 'default_pdf_folder') and self.default_pdf_folder and os.path.isdir(self.default_pdf_folder):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_name = os.path.join(self.default_pdf_folder, f"Image_{timestamp}.pdf")
+        else:
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(self, "រក្សាទុកជា PDF / Save as PDF", "", "PDF Files (*.pdf)", options=options)
+            
+        if not file_name:
+            return
+            
+        from PyQt5.QtGui import QPdfWriter, QPageSize, QPageLayout, QPainter, QTransform
+        from PyQt5.QtCore import QSizeF, QMarginsF, Qt, QRectF
+        
+        pdf_writer = QPdfWriter(file_name)
+        
+        paper_w = self.sb_width.value()
+        paper_h = self.sb_height.value()
+        
+        pdf_writer.setPageSize(QPageSize(QSizeF(paper_w, paper_h), QPageSize.Millimeter))
+        pdf_writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+        
+        dpi = self.sb_dpi.value()
+        pdf_writer.setResolution(dpi)
+        
+        painter = QPainter(pdf_writer)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        
+        scale = dpi / 25.4
+        
+        painter.fillRect(0, 0, int(paper_w * scale), int(paper_h * scale), Qt.white)
+        
+        for pos in self.preview_canvas.photo_positions:
+            p_w, p_h = pos.get('w', self.preview_canvas.photo_w), pos.get('h', self.preview_canvas.photo_h)
+            cell_w = p_w * scale
+            cell_h = p_h * scale
+            tw, th = max(1, int(cell_w + 1)), max(1, int(cell_h + 1))
+            
+            cx = pos['x'] * scale
+            cy = pos['y'] * scale
+            
+            current_pixmap = pos.get('image_pixmap')
+            target_rect = QRectF(cx, cy, cell_w, cell_h).toRect()
+            
+            if target_rect.width() <= 0 or target_rect.height() <= 0:
+                continue
+                
+            if current_pixmap and not current_pixmap.isNull():
+                manual_angle = pos.get('rotation_angle', 0)
+                if manual_angle != 0:
+                    transform = QTransform().rotate(manual_angle)
+                    current_pixmap = current_pixmap.transformed(transform, Qt.SmoothTransformation)
+                    
+                if self.preview_canvas.optimize_fit and manual_angle == 0:
+                    img_w, img_h = current_pixmap.width(), current_pixmap.height()
+                    if img_w != img_h and cell_w != cell_h:
+                        if (img_w > img_h) != (cell_w > cell_h):
+                            transform = QTransform().rotate(90)
+                            current_pixmap = current_pixmap.transformed(transform, Qt.SmoothTransformation)
+
+                if self.preview_canvas.image_mode == 'fill':
+                    painter.drawPixmap(target_rect, current_pixmap)
+                elif self.preview_canvas.image_mode == 'contain':
+                    pre_scaled_contain = current_pixmap.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    if pre_scaled_contain and not pre_scaled_contain.isNull():
+                        x_offset = (target_rect.width() - pre_scaled_contain.width()) // 2
+                        y_offset = (target_rect.height() - pre_scaled_contain.height()) // 2
+                        painter.drawPixmap(target_rect.x() + x_offset, target_rect.y() + y_offset, pre_scaled_contain)
+                elif self.preview_canvas.image_mode == 'cover':
+                    pre_scaled_cover = current_pixmap.scaled(tw, th, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                    if pre_scaled_cover and not pre_scaled_cover.isNull():
+                        img_scale = pos.get('scale', 1.0)
+                        pan_x = pos.get('pan_x', 0.0)
+                        pan_y = pos.get('pan_y', 0.0)
+                        
+                        screen_scale = self.preview_canvas.paper_width_px / self.preview_canvas.paper_w if self.preview_canvas.paper_w > 0 else 1
+                        pdf_pan_x = pan_x * (scale / screen_scale) if screen_scale else 0
+                        pdf_pan_y = pan_y * (scale / screen_scale) if screen_scale else 0
+
+                        if img_scale > 1.0:
+                            new_w = int(pre_scaled_cover.width() * img_scale)
+                            new_h = int(pre_scaled_cover.height() * img_scale)
+                            if new_w < 8000 and new_h < 8000:
+                                current_cover = pre_scaled_cover.scaled(new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                            else:
+                                current_cover = pre_scaled_cover
+                        else:
+                            current_cover = pre_scaled_cover
+                            
+                        base_crop_x = (current_cover.width() - target_rect.width()) / 2.0
+                        base_crop_y = (current_cover.height() - target_rect.height()) / 2.0
+                        
+                        crop_x = int(max(0, min(base_crop_x - pdf_pan_x, current_cover.width() - target_rect.width())))
+                        crop_y = int(max(0, min(base_crop_y - pdf_pan_y, current_cover.height() - target_rect.height())))
+                        
+                        cropped_pixmap = current_cover.copy(crop_x, crop_y, target_rect.width(), target_rect.height())
+                        if not cropped_pixmap.isNull():
+                            painter.drawPixmap(target_rect, cropped_pixmap)
+
+                if getattr(self.preview_canvas, 'show_border', False):
+                    from PyQt5.QtGui import QPen, QColor
+                    painter.setPen(QPen(QColor(0, 0, 0), 2, Qt.SolidLine))
+                    painter.drawRect(target_rect)
+            
+        painter.end()
+        if show_msg:
+            QMessageBox.information(self, "ជោគជ័យ / Success", "ឯកសារ PDF ត្រូវបានរក្សាទុកដោយជោគជ័យ! / PDF saved successfully!")
+        return file_name
+
 if __name__ == '__main__':
+    import ctypes
+    import os
+    try:
+        myappid = 'photoprintapp.version.1.0.2'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     
     # ដាក់ Font ខ្មែរជាគោល ដើម្បីជៀសវាងអក្សរខូច
     font = QFont("Khmer OS Siemreap", 9)
     app.setFont(font)
     
+    from PyQt5.QtGui import QIcon
+    def get_resource_path(relative_path):
+        try:
+            base_path = sys._MEIPASS
+        except Exception:
+            base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        return os.path.join(base_path, relative_path)
+        
+    icon_path = get_resource_path('Assets/Icon.ico')
+    app_icon = QIcon(icon_path)
+    app.setWindowIcon(app_icon)
+    
     window = PhotoPrintApp()
-    window.show()
+    window.setWindowIcon(app_icon)
+    window.showMaximized()
     sys.exit(app.exec_())
