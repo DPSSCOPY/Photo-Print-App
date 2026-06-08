@@ -2,8 +2,9 @@ import sys
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QPushButton, QGroupBox, 
                              QComboBox, QSpinBox, QDoubleSpinBox, QRadioButton, 
-                             QCheckBox, QSlider, QGridLayout, QSizePolicy, QFileDialog, QButtonGroup)
-from PyQt5.QtCore import Qt, QRectF, pyqtSignal
+                             QCheckBox, QSlider, QGridLayout, QSizePolicy, QFileDialog, QButtonGroup,
+                             QTabWidget, QTextEdit, QFontComboBox, QColorDialog)
+from PyQt5.QtCore import Qt, QRectF, pyqtSignal, QPointF, QPoint
 from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPixmap, QTransform
 
 class PreviewWidget(QWidget):
@@ -67,7 +68,6 @@ class PreviewWidget(QWidget):
 
         # តម្រៀបតាមទំហំ (កម្ពស់) ធំបំផុតមុន ដើម្បីងាយស្រួលរៀបចំ (Shelf Packing)
         items_to_place.sort(key=lambda x: max(x['w'], x['h']), reverse=True)
-
         old_positions = self.photo_positions.copy()
         self.photo_positions.clear()
 
@@ -633,6 +633,248 @@ class PreviewWidget(QWidget):
         else:
             super().wheelEvent(event)
 
+class TextPreviewWidget(QWidget):
+    """ Custom Widget សម្រាប់គូរទិដ្ឋភាពអក្សរធំ (Live Text Preview) """
+    def __init__(self):
+        super().__init__()
+        self.setMinimumSize(400, 500)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setStyleSheet("background-color: #dbe2e9;")
+        
+        self.paper_w = 210.0
+        self.paper_h = 297.0
+        self.margin_top = 10
+        self.margin_bottom = 10
+        self.margin_left = 10
+        self.margin_right = 10
+        
+        self.text = ""
+        self.text_font = QFont("Khmer OS Muol Light", 50)
+        self.text_color = QColor(0, 0, 0)
+        self.text_align = Qt.AlignCenter
+        self.bg_color = QColor(255, 255, 255)
+        self.auto_fit = False
+        
+        self.free_stretch = False
+        self.text_rect_mm = None
+        self.drag_mode = None
+        self.drag_start_pos = None
+        self.drag_start_rect = None
+        self.current_scale = 1.0
+        self.current_paper_x = 0
+        self.current_paper_y = 0
+        self.setMouseTracking(True)
+
+    def get_handle_at(self, pos):
+        if not self.free_stretch or self.text_rect_mm is None: return None
+        rect_px = QRectF(self.current_paper_x + self.text_rect_mm.x() * self.current_scale, 
+                         self.current_paper_y + self.text_rect_mm.y() * self.current_scale, 
+                         self.text_rect_mm.width() * self.current_scale, 
+                         self.text_rect_mm.height() * self.current_scale)
+        hs = 10
+        def hit(p):
+            return QRectF(p.x() - hs/2, p.y() - hs/2, hs, hs).contains(pos)
+            
+        if hit(rect_px.topLeft()): return 'TL'
+        if hit(rect_px.topRight()): return 'TR'
+        if hit(rect_px.bottomLeft()): return 'BL'
+        if hit(rect_px.bottomRight()): return 'BR'
+        if hit(QPointF(rect_px.center().x(), rect_px.top())): return 'T'
+        if hit(QPointF(rect_px.center().x(), rect_px.bottom())): return 'B'
+        if hit(QPointF(rect_px.left(), rect_px.center().y())): return 'L'
+        if hit(QPointF(rect_px.right(), rect_px.center().y())): return 'R'
+        if rect_px.contains(pos): return 'C'
+        return None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            handle = self.get_handle_at(event.pos())
+            if handle:
+                self.drag_mode = handle
+                self.drag_start_pos = event.pos()
+                self.drag_start_rect = QRectF(self.text_rect_mm)
+
+    def mouseMoveEvent(self, event):
+        handle = self.get_handle_at(event.pos())
+        if self.drag_mode:
+            handle = self.drag_mode
+            
+        if handle in ['TL', 'BR']:
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif handle in ['TR', 'BL']:
+            self.setCursor(Qt.SizeBDiagCursor)
+        elif handle in ['L', 'R']:
+            self.setCursor(Qt.SizeHorCursor)
+        elif handle in ['T', 'B']:
+            self.setCursor(Qt.SizeVerCursor)
+        elif handle == 'C':
+            self.setCursor(Qt.SizeAllCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+
+        if self.drag_mode and self.drag_start_pos and self.drag_start_rect:
+            delta_x = (event.x() - self.drag_start_pos.x()) / self.current_scale
+            delta_y = (event.y() - self.drag_start_pos.y()) / self.current_scale
+            new_rect = QRectF(self.drag_start_rect)
+            
+            if self.drag_mode == 'TL':
+                new_rect.setTopLeft(new_rect.topLeft() + QPointF(delta_x, delta_y))
+            elif self.drag_mode == 'TR':
+                new_rect.setTopRight(new_rect.topRight() + QPointF(delta_x, delta_y))
+            elif self.drag_mode == 'BL':
+                new_rect.setBottomLeft(new_rect.bottomLeft() + QPointF(delta_x, delta_y))
+            elif self.drag_mode == 'BR':
+                new_rect.setBottomRight(new_rect.bottomRight() + QPointF(delta_x, delta_y))
+            elif self.drag_mode == 'L':
+                new_rect.setLeft(new_rect.left() + delta_x)
+            elif self.drag_mode == 'R':
+                new_rect.setRight(new_rect.right() + delta_x)
+            elif self.drag_mode == 'T':
+                new_rect.setTop(new_rect.top() + delta_y)
+            elif self.drag_mode == 'B':
+                new_rect.setBottom(new_rect.bottom() + delta_y)
+            elif self.drag_mode == 'C':
+                new_rect.translate(delta_x, delta_y)
+                
+            if new_rect.width() < 5: new_rect.setWidth(5)
+            if new_rect.height() < 5: new_rect.setHeight(5)
+            
+            self.text_rect_mm = new_rect
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_mode = None
+            self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        padding = 10
+        avail_w = self.width() - padding * 2
+        avail_h = self.height() - padding * 2
+        
+        if self.paper_h <= 0: return
+        aspect_ratio = self.paper_w / self.paper_h
+        
+        paper_height = avail_h
+        paper_width = paper_height * aspect_ratio
+        if paper_width > avail_w:
+            paper_width = avail_w
+            paper_height = paper_width / aspect_ratio
+            
+        paper_x = (self.width() - paper_width) / 2
+        paper_y = (self.height() - paper_height) / 2
+        
+        painter.fillRect(int(paper_x), int(paper_y), int(paper_width), int(paper_height), self.bg_color)
+        
+        scale = paper_width / self.paper_w if self.paper_w > 0 else 1
+        self.current_scale = scale
+        self.current_paper_x = paper_x
+        self.current_paper_y = paper_y
+        
+        margin_pen = QPen(QColor(255, 50, 50, 120), 1, Qt.DashLine)
+        painter.setPen(margin_pen)
+        m_top = paper_y + self.margin_top * scale
+        m_bottom = paper_y + (self.paper_h - self.margin_bottom) * scale
+        m_left = paper_x + self.margin_left * scale
+        m_right = paper_x + (self.paper_w - self.margin_right) * scale
+        
+        painter.drawLine(int(paper_x), int(m_top), int(paper_x + paper_width), int(m_top))
+        painter.drawLine(int(paper_x), int(m_bottom), int(paper_x + paper_width), int(m_bottom))
+        painter.drawLine(int(m_left), int(paper_y), int(m_left), int(paper_y + paper_height))
+        painter.drawLine(int(m_right), int(paper_y), int(m_right), int(paper_y + paper_height))
+        
+        if self.text:
+            painter.setPen(self.text_color)
+            
+            if self.free_stretch:
+                if self.text_rect_mm is None:
+                    self.text_rect_mm = QRectF(self.margin_left, self.margin_top, self.paper_w - self.margin_left - self.margin_right, self.paper_h - self.margin_top - self.margin_bottom)
+                
+                rect_px = QRectF(paper_x + self.text_rect_mm.x() * scale, paper_y + self.text_rect_mm.y() * scale, self.text_rect_mm.width() * scale, self.text_rect_mm.height() * scale)
+                
+                base_font = QFont(self.text_font)
+                base_font.setPixelSize(100)
+                from PyQt5.QtGui import QPainterPath, QFontMetricsF, QBrush
+                
+                path = QPainterPath()
+                fm = QFontMetricsF(base_font)
+                
+                lines = self.text.split('\n')
+                y = fm.ascent()
+                for line in lines:
+                    line_w = fm.horizontalAdvance(line)
+                    if self.text_align & Qt.AlignHCenter:
+                        x = -line_w / 2
+                    elif self.text_align & Qt.AlignRight:
+                        x = -line_w
+                    else:
+                        x = 0
+                    path.addText(x, y, base_font, line)
+                    y += fm.lineSpacing()
+                    
+                base_rect = path.boundingRect()
+                
+                painter.save()
+                painter.translate(rect_px.x(), rect_px.y())
+                sx = rect_px.width() / base_rect.width() if base_rect.width() > 0 else 1
+                sy = rect_px.height() / base_rect.height() if base_rect.height() > 0 else 1
+                painter.scale(sx, sy)
+                painter.translate(-base_rect.x(), -base_rect.y())
+                
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(self.text_color))
+                painter.drawPath(path)
+                painter.restore()
+                
+                painter.setPen(QPen(Qt.blue, 1, Qt.DashLine))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(rect_px)
+                
+                painter.setPen(QPen(Qt.blue, 1))
+                painter.setBrush(Qt.white)
+                hs = 8
+                handles = [
+                    rect_px.topLeft(), rect_px.topRight(), rect_px.bottomLeft(), rect_px.bottomRight(),
+                    QPointF(rect_px.center().x(), rect_px.top()), QPointF(rect_px.center().x(), rect_px.bottom()),
+                    QPointF(rect_px.left(), rect_px.center().y()), QPointF(rect_px.right(), rect_px.center().y())
+                ]
+                for p in handles:
+                    painter.drawRect(QRectF(p.x() - hs/2, p.y() - hs/2, hs, hs))
+                    
+            else:
+                scaled_font = QFont(self.text_font)
+                rect = QRectF(m_left, m_top, m_right - m_left, m_bottom - m_top)
+                
+                if self.auto_fit:
+                    from PyQt5.QtGui import QFontMetricsF
+                    min_size = 1
+                    max_size = 5000
+                    best_size = min_size
+                    
+                    while min_size <= max_size:
+                        mid_size = (min_size + max_size) // 2
+                        scaled_font.setPixelSize(mid_size)
+                        fm = QFontMetricsF(scaled_font)
+                        br = fm.boundingRect(rect, self.text_align | Qt.TextWordWrap, self.text)
+                        
+                        if br.width() <= rect.width() and br.height() <= rect.height():
+                            best_size = mid_size
+                            min_size = mid_size + 1
+                        else:
+                            max_size = mid_size - 1
+                    scaled_font.setPixelSize(best_size)
+                else:
+                    pt_to_mm = 25.4 / 72.0
+                    size_mm = self.text_font.pointSizeF() * pt_to_mm
+                    size_px = size_mm * scale
+                    scaled_font.setPixelSize(int(max(1, size_px)))
+                    
+                painter.setFont(scaled_font)
+                painter.drawText(rect, self.text_align | Qt.TextWordWrap, self.text)
+
 class PhotoPrintApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -650,7 +892,12 @@ class PhotoPrintApp(QMainWindow):
         # Main Widget and Layout
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
-        main_layout = QHBoxLayout(main_widget)
+        
+        self.tabs = QTabWidget(main_widget)
+        
+        # TAB 1: Photo Print
+        self.tab1 = QWidget()
+        main_layout = QHBoxLayout(self.tab1)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
         # បង្កើត Preview Canvas ជាមុនសិន ដើម្បីឲ្យ Panel ផ្សេងៗអាចភ្ជាប់ (connect) ទៅវាបាន
@@ -1001,8 +1248,373 @@ class PhotoPrintApp(QMainWindow):
         main_layout.addWidget(mid_panel, 1) # អនុញ្ញាតឲ្យផ្ទាំងកណ្តាលរីកធំជាងគេ
         main_layout.addWidget(right_panel)
         
+        # TAB 2: Large Text Banner
+        self.tab2 = QWidget()
+        self.initTextUI(self.tab2)
+        
+        self.tabs.addTab(self.tab1, "១. បោះពុម្ពរូបថត / Photo Print")
+        self.tabs.addTab(self.tab2, "២. សរសេរអក្សរធំ / Large Text Banner")
+        
+        layout = QVBoxLayout(main_widget)
+        layout.addWidget(self.tabs)
+        layout.setContentsMargins(0,0,0,0)
+        
         # ធ្វើការគណនាបឋមនៅពេលចាប់ផ្តើមកម្មវិធី
         self.calculate_layout()
+
+    def initTextUI(self, parent_widget):
+        from PyQt5.QtWidgets import QTextEdit, QFontComboBox, QColorDialog
+        layout = QHBoxLayout(parent_widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Left Panel (Controls)
+        left_panel = QWidget()
+        left_panel.setFixedWidth(320)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setAlignment(Qt.AlignTop)
+        
+        title_lbl = QLabel("<b>សរសេរអក្សរធំ / Large Text Banner</b>")
+        title_lbl.setFont(QFont("Khmer OS Battambang", 12))
+        left_layout.addWidget(title_lbl)
+        
+        # Text Input
+        gb_text = QGroupBox("១. អត្ថបទ / Text Input")
+        gb_text_layout = QVBoxLayout()
+        self.txt_banner = QTextEdit()
+        self.txt_banner.setPlaceholderText("បញ្ចូលអត្ថបទទីនេះ...")
+        font_battambang = QFont("Khmer OS Battambang", 12)
+        self.txt_banner.setFont(font_battambang)
+        self.txt_banner.textChanged.connect(self.update_text_preview)
+        gb_text_layout.addWidget(self.txt_banner)
+        gb_text.setLayout(gb_text_layout)
+        left_layout.addWidget(gb_text)
+        
+        # Font Settings
+        gb_font = QGroupBox("២. កំណត់អក្សរ / Font Settings")
+        gb_font_layout = QVBoxLayout()
+        
+        self.cb_font = QFontComboBox()
+        self.cb_font.setCurrentFont(QFont("Khmer OS Muol Light"))
+        self.cb_font.currentFontChanged.connect(self.update_text_preview)
+        gb_font_layout.addWidget(QLabel("ប្រភេទអក្សរ / Font Family:"))
+        gb_font_layout.addWidget(self.cb_font)
+        
+        h_size = QHBoxLayout()
+        h_size.addWidget(QLabel("ទំហំ / Size (pt):"))
+        self.sb_font_size = QSpinBox()
+        self.sb_font_size.setRange(8, 1000)
+        self.sb_font_size.setValue(100)
+        self.sb_font_size.valueChanged.connect(self.update_text_preview)
+        h_size.addWidget(self.sb_font_size)
+        gb_font_layout.addLayout(h_size)
+        
+        self.chk_auto_fit = QCheckBox("បំពេញពេញក្រដាស / Auto-Fit Paper")
+        self.chk_auto_fit.setChecked(False)
+        self.chk_auto_fit.stateChanged.connect(self.toggle_auto_fit)
+        gb_font_layout.addWidget(self.chk_auto_fit)
+        
+        self.chk_free_stretch = QCheckBox("ទាញដោយសេរី / Free Stretch")
+        self.chk_free_stretch.setChecked(False)
+        self.chk_free_stretch.stateChanged.connect(self.toggle_free_stretch)
+        gb_font_layout.addWidget(self.chk_free_stretch)
+        
+        self.btn_fill_paper = QPushButton("ទាញបំពេញក្រដាស / Stretch to Fill")
+        self.btn_fill_paper.setEnabled(False)
+        self.btn_fill_paper.clicked.connect(self.stretch_to_fill)
+        gb_font_layout.addWidget(self.btn_fill_paper)
+        
+        h_color = QHBoxLayout()
+        self.btn_text_color = QPushButton("ពណ៌អក្សរ / Text Color")
+        self.btn_text_color.setStyleSheet("background-color: black; color: white;")
+        self.btn_text_color.clicked.connect(self.choose_text_color)
+        
+        self.btn_bg_color = QPushButton("ពណ៌ផ្ទៃ / BG Color")
+        self.btn_bg_color.setStyleSheet("background-color: white; color: black;")
+        self.btn_bg_color.clicked.connect(self.choose_bg_color)
+        
+        h_color.addWidget(self.btn_text_color)
+        h_color.addWidget(self.btn_bg_color)
+        gb_font_layout.addLayout(h_color)
+        
+        h_align = QHBoxLayout()
+        self.btn_align_left_t = QPushButton("Left")
+        self.btn_align_center_t = QPushButton("Center")
+        self.btn_align_right_t = QPushButton("Right")
+        
+        self.btn_align_left_t.clicked.connect(lambda: self.set_text_align(Qt.AlignLeft))
+        self.btn_align_center_t.clicked.connect(lambda: self.set_text_align(Qt.AlignCenter))
+        self.btn_align_right_t.clicked.connect(lambda: self.set_text_align(Qt.AlignRight))
+        
+        h_align.addWidget(self.btn_align_left_t)
+        h_align.addWidget(self.btn_align_center_t)
+        h_align.addWidget(self.btn_align_right_t)
+        gb_font_layout.addLayout(h_align)
+        
+        gb_font.setLayout(gb_font_layout)
+        left_layout.addWidget(gb_font)
+        
+        # Paper Settings
+        gb_paper = QGroupBox("៣. ក្រដាស និងគែម / Paper & Margin")
+        gb_paper_layout = QVBoxLayout()
+        self.cb_t_paper = QComboBox()
+        self.cb_t_paper.addItems(["A4 (210 x 297 mm)", "A3 (297 x 420 mm)", "A5 (148 x 210 mm)", "Letter (215.9 x 279.4 mm)"])
+        self.cb_t_paper.currentIndexChanged.connect(self.update_text_paper)
+        gb_paper_layout.addWidget(QLabel("ទំហំក្រដាស / Paper Size:"))
+        gb_paper_layout.addWidget(self.cb_t_paper)
+        
+        h_ori = QHBoxLayout()
+        self.rb_t_port = QRadioButton("បញ្ឈរ / Port.")
+        self.rb_t_land = QRadioButton("ផ្តេក / Land.")
+        self.rb_t_land.setChecked(True) # Text banner usually landscape
+        self.rb_t_port.toggled.connect(self.update_text_paper)
+        h_ori.addWidget(self.rb_t_port)
+        h_ori.addWidget(self.rb_t_land)
+        gb_paper_layout.addLayout(h_ori)
+        
+        h_margin = QHBoxLayout()
+        h_margin.addWidget(QLabel("គែម / Margin (mm):"))
+        self.sb_t_margin = QSpinBox()
+        self.sb_t_margin.setValue(10)
+        self.sb_t_margin.valueChanged.connect(self.update_text_preview)
+        h_margin.addWidget(self.sb_t_margin)
+        gb_paper_layout.addLayout(h_margin)
+        
+        gb_paper.setLayout(gb_paper_layout)
+        left_layout.addWidget(gb_paper)
+        
+        left_layout.addStretch()
+        
+        # Action Buttons
+        btn_save_pdf = QPushButton("រក្សាទុក PDF / Save PDF")
+        btn_save_pdf.setStyleSheet("background-color: #128c7e; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
+        btn_save_pdf.clicked.connect(self.save_text_pdf)
+        
+        btn_print = QPushButton("បញ្ចូនទៅ Foxit / Import Foxit")
+        btn_print.setStyleSheet("background-color: #5850ec; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
+        btn_print.clicked.connect(self.import_text_to_foxit)
+        
+        left_layout.addWidget(btn_save_pdf)
+        left_layout.addWidget(btn_print)
+        
+        # Middle Panel (Preview)
+        mid_panel = QWidget()
+        mid_layout = QVBoxLayout(mid_panel)
+        mid_title = QLabel("<b>ទិដ្ឋភាពបង្ហាញជាក់ស្តែង / LIVE TEXT PREVIEW</b>")
+        mid_title.setAlignment(Qt.AlignCenter)
+        mid_title.setFont(QFont("Khmer OS Battambang", 11))
+        mid_layout.addWidget(mid_title)
+        
+        self.text_preview = TextPreviewWidget()
+        mid_layout.addWidget(self.text_preview)
+        
+        layout.addWidget(left_panel)
+        layout.addWidget(mid_panel, 1)
+        
+        self.text_color = QColor(0, 0, 0)
+        self.bg_color = QColor(255, 255, 255)
+        self.text_align = Qt.AlignCenter
+        self.update_text_paper()
+
+    def update_text_paper(self):
+        txt = self.cb_t_paper.currentText()
+        if "A4" in txt: w, h = 210.0, 297.0
+        elif "A3" in txt: w, h = 297.0, 420.0
+        elif "A5" in txt: w, h = 148.0, 210.0
+        else: w, h = 215.9, 279.4
+        
+        if self.rb_t_land.isChecked():
+            w, h = h, w
+            
+        self.text_preview.paper_w = w
+        self.text_preview.paper_h = h
+        self.update_text_preview()
+        
+    def toggle_auto_fit(self):
+        self.sb_font_size.setEnabled(not self.chk_auto_fit.isChecked() and not self.chk_free_stretch.isChecked())
+        self.update_text_preview()
+
+    def toggle_free_stretch(self):
+        is_free = self.chk_free_stretch.isChecked()
+        self.chk_auto_fit.setEnabled(not is_free)
+        self.sb_font_size.setEnabled(not is_free and not self.chk_auto_fit.isChecked())
+        self.btn_fill_paper.setEnabled(is_free)
+        self.text_preview.free_stretch = is_free
+        self.text_preview.update()
+
+    def stretch_to_fill(self):
+        m = self.sb_t_margin.value()
+        self.text_preview.text_rect_mm = QRectF(m, m, self.text_preview.paper_w - 2*m, self.text_preview.paper_h - 2*m)
+        self.text_preview.update()
+
+    def update_text_preview(self):
+        self.text_preview.text = self.txt_banner.toPlainText()
+        font = self.cb_font.currentFont()
+        font.setPointSizeF(self.sb_font_size.value())
+        self.text_preview.text_font = font
+        self.text_preview.text_color = self.text_color
+        self.text_preview.bg_color = self.bg_color
+        self.text_preview.text_align = self.text_align
+        self.text_preview.auto_fit = self.chk_auto_fit.isChecked()
+        m = self.sb_t_margin.value()
+        self.text_preview.margin_top = m
+        self.text_preview.margin_bottom = m
+        self.text_preview.margin_left = m
+        self.text_preview.margin_right = m
+        self.text_preview.update()
+        
+    def choose_text_color(self):
+        from PyQt5.QtWidgets import QColorDialog
+        color = QColorDialog.getColor(self.text_color, self)
+        if color.isValid():
+            self.text_color = color
+            lum = color.red() * 0.299 + color.green() * 0.587 + color.blue() * 0.114
+            text_col = "black" if lum > 128 else "white"
+            self.btn_text_color.setStyleSheet(f"background-color: {color.name()}; color: {text_col};")
+            self.update_text_preview()
+
+    def choose_bg_color(self):
+        from PyQt5.QtWidgets import QColorDialog
+        color = QColorDialog.getColor(self.bg_color, self)
+        if color.isValid():
+            self.bg_color = color
+            lum = color.red() * 0.299 + color.green() * 0.587 + color.blue() * 0.114
+            text_col = "black" if lum > 128 else "white"
+            self.btn_bg_color.setStyleSheet(f"background-color: {color.name()}; color: {text_col};")
+            self.update_text_preview()
+
+    def set_text_align(self, align):
+        self.text_align = align
+        self.update_text_preview()
+
+    def save_text_pdf(self, show_msg=True):
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+        from PyQt5.QtGui import QPdfWriter, QPageSize, QPageLayout, QPainter
+        from PyQt5.QtCore import QSizeF, QMarginsF, Qt, QRectF
+        import os
+        from datetime import datetime
+        
+        file_name = ""
+        if hasattr(self, 'default_pdf_folder') and self.default_pdf_folder and os.path.isdir(self.default_pdf_folder):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_name = os.path.join(self.default_pdf_folder, f"TextBanner_{timestamp}.pdf")
+        else:
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(self, "រក្សាទុកជា PDF / Save as PDF", "", "PDF Files (*.pdf)", options=options)
+            
+        if not file_name: return None
+        
+        pdf_writer = QPdfWriter(file_name)
+        paper_w = self.text_preview.paper_w
+        paper_h = self.text_preview.paper_h
+        
+        pdf_writer.setPageSize(QPageSize(QSizeF(paper_w, paper_h), QPageSize.Millimeter))
+        pdf_writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+        pdf_writer.setResolution(300)
+        
+        painter = QPainter(pdf_writer)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        scale = 300 / 25.4
+        
+        painter.fillRect(0, 0, int(paper_w * scale), int(paper_h * scale), self.bg_color)
+        
+        if self.text_preview.text:
+            painter.setPen(self.text_color)
+            
+            if self.chk_free_stretch.isChecked():
+                rect_mm = self.text_preview.text_rect_mm
+                if rect_mm is None:
+                    m = self.sb_t_margin.value()
+                    rect_mm = QRectF(m, m, paper_w - 2*m, paper_h - 2*m)
+                    
+                rect_px = QRectF(rect_mm.x() * scale, rect_mm.y() * scale, rect_mm.width() * scale, rect_mm.height() * scale)
+                
+                base_font = QFont(self.text_preview.text_font)
+                base_font.setPixelSize(100)
+                from PyQt5.QtGui import QPainterPath, QFontMetricsF, QBrush
+                
+                path = QPainterPath()
+                fm = QFontMetricsF(base_font)
+                
+                lines = self.text_preview.text.split('\n')
+                y = fm.ascent()
+                for line in lines:
+                    line_w = fm.horizontalAdvance(line)
+                    if self.text_align & Qt.AlignHCenter:
+                        x = -line_w / 2
+                    elif self.text_align & Qt.AlignRight:
+                        x = -line_w
+                    else:
+                        x = 0
+                    path.addText(x, y, base_font, line)
+                    y += fm.lineSpacing()
+                    
+                base_rect = path.boundingRect()
+                
+                painter.save()
+                painter.translate(rect_px.x(), rect_px.y())
+                sx = rect_px.width() / base_rect.width() if base_rect.width() > 0 else 1
+                sy = rect_px.height() / base_rect.height() if base_rect.height() > 0 else 1
+                painter.scale(sx, sy)
+                painter.translate(-base_rect.x(), -base_rect.y())
+                
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(self.text_color))
+                painter.drawPath(path)
+                painter.restore()
+            else:
+                scaled_font = QFont(self.text_preview.text_font)
+                m = self.sb_t_margin.value()
+                m_px = m * scale
+                rect = QRectF(m_px, m_px, (paper_w - 2*m) * scale, (paper_h - 2*m) * scale)
+                
+                if self.chk_auto_fit.isChecked():
+                    from PyQt5.QtGui import QFontMetricsF
+                    min_size = 1
+                    max_size = 5000
+                    best_size = min_size
+                    
+                    while min_size <= max_size:
+                        mid_size = (min_size + max_size) // 2
+                        scaled_font.setPixelSize(mid_size)
+                        fm = QFontMetricsF(scaled_font)
+                        br = fm.boundingRect(rect, self.text_align | Qt.TextWordWrap, self.text_preview.text)
+                        
+                        if br.width() <= rect.width() and br.height() <= rect.height():
+                            best_size = mid_size
+                            min_size = mid_size + 1
+                        else:
+                            max_size = mid_size - 1
+                    scaled_font.setPixelSize(best_size)
+                else:
+                    pt_to_mm = 25.4 / 72.0
+                    size_mm = self.text_preview.text_font.pointSizeF() * pt_to_mm
+                    size_px = size_mm * scale
+                    scaled_font.setPixelSize(int(max(1, size_px)))
+                    
+                painter.setFont(scaled_font)
+                painter.drawText(rect, self.text_align | Qt.TextWordWrap, self.text_preview.text)
+            
+        painter.end()
+        if show_msg:
+            QMessageBox.information(self, "ជោគជ័យ / Success", "ឯកសារ PDF ត្រូវបានរក្សាទុកដោយជោគជ័យ! / PDF saved successfully!")
+        return file_name
+        
+    def import_text_to_foxit(self):
+        import subprocess
+        from PyQt5.QtWidgets import QMessageBox
+        import os
+        
+        if not hasattr(self, 'foxit_path') or not self.foxit_path or not os.path.exists(self.foxit_path):
+            QMessageBox.warning(self, "មិនទាន់កំណត់កម្មវិធី / Not Configured", "សូមចូលទៅកាន់ Settings (⚙) ដើម្បីកំណត់ទីតាំងកម្មវិធី Foxit PDF ជាមុនសិន។")
+            return
+            
+        file_name = self.save_text_pdf(show_msg=False)
+        if file_name:
+            try:
+                subprocess.Popen([self.foxit_path, file_name])
+            except Exception as e:
+                QMessageBox.critical(self, "កំហុស / Error", f"មិនអាចបើកកម្មវិធី Foxit PDF បានទេ:\n{str(e)}")
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Delete:
