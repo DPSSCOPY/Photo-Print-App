@@ -57,19 +57,48 @@ class PreviewWidget(QWidget):
     def set_default_image_pixmap(self, pixmap):
         self.default_image_pixmap = pixmap
 
-    def generate_grid(self, size_configs=None):
-        """ size_configs: list of {'w': mm, 'h': mm, 'qty': int, 'label': str} """
-        if size_configs is None: return
+    def generate_grid(self, items_to_place=None):
+        """ items_to_place: list of dicts {'w': mm, 'h': mm, 'label': str} """
+        if not items_to_place: return []
 
-        items_to_place = []
-        for config in size_configs:
-            for _ in range(config['qty']):
-                items_to_place.append(config)
-
-        # តម្រៀបតាមទំហំ (កម្ពស់) ធំបំផុតមុន ដើម្បីងាយស្រួលរៀបចំ (Shelf Packing)
-        items_to_place.sort(key=lambda x: max(x['w'], x['h']), reverse=True)
         old_positions = self.photo_positions.copy()
         self.photo_positions.clear()
+
+        if getattr(self, 'grid_cols', 0) > 0 and getattr(self, 'grid_rows', 0) > 0 and not self.is_manual:
+            cols = self.grid_cols
+            rows = self.grid_rows
+            
+            avail_w = self.paper_w - self.margin_left - self.margin_right
+            avail_h = self.paper_h - self.margin_top - self.margin_bottom
+            
+            cell_w = (avail_w - (cols - 1) * self.gap) / cols if cols > 0 else 10
+            cell_h = (avail_h - (rows - 1) * self.gap) / rows if rows > 0 else 10
+            
+            placed_count = 0
+            for idx, item in enumerate(items_to_place):
+                if placed_count >= cols * rows:
+                    return items_to_place[idx:]
+                
+                col = placed_count % cols
+                row = placed_count // cols
+                
+                cx = self.offset_x + col * (cell_w + self.gap)
+                cy = self.offset_y + row * (cell_h + self.gap)
+                
+                w = item['w'] if item.get('is_original_size') else cell_w
+                h = item['h'] if item.get('is_original_size') else cell_h
+                
+                px = cx + (cell_w - w) / 2
+                py = cy + (cell_h - h) / 2
+                
+                self.photo_positions.append({
+                    'x': px, 'y': py,
+                    'w': w, 'h': h, 'label': item.get('label', ''),
+                    'scale': 1.0, 'pan_x': 0.0, 'pan_y': 0.0
+                })
+                placed_count += 1
+                
+            return []
 
         curr_x, curr_y = self.offset_x, self.offset_y
         max_row_h = 0
@@ -107,7 +136,11 @@ class PreviewWidget(QWidget):
                     fits_norm = (curr_x + w_for_packing <= avail_w + 0.1)
                     fits_rot = (curr_x + h_for_packing <= avail_w + 0.1)
                 
-                if not fits_norm and not fits_rot: break
+                if not fits_norm and not fits_rot:
+                    if curr_x == self.offset_x and curr_y == self.offset_y:
+                        fits_norm = True
+                    else:
+                        return items_to_place[idx:]
                 
                 is_rotated = False
                 if fits_norm:
@@ -123,7 +156,7 @@ class PreviewWidget(QWidget):
                     fits_norm = (curr_x + w_for_packing <= avail_w + 0.1)
                     fits_rot = (curr_x + h_for_packing <= avail_w + 0.1)
                     
-                    if not fits_norm and not fits_rot: break
+                    if not fits_norm and not fits_rot: return items_to_place[idx:]
                     
                     if fits_norm:
                         cw, ch = w_for_packing, h_for_packing
@@ -131,7 +164,7 @@ class PreviewWidget(QWidget):
                         cw, ch = h_for_packing, w_for_packing
                         is_rotated = True
 
-                if curr_y + ch > avail_h + 0.1: break
+                if curr_y + ch > avail_h + 0.1: return items_to_place[idx:]
 
                 px, py = curr_x, curr_y
                 curr_x += cw + self.gap
@@ -633,6 +666,59 @@ class PreviewWidget(QWidget):
         else:
             super().wheelEvent(event)
 
+import re
+
+def build_mixed_html(text, font_kh, font_en, color, bg_color, is_bold, is_italic, is_underline, align, font_size_px=None):
+    from PyQt5.QtCore import Qt
+    align_str = "left"
+    if align & Qt.AlignHCenter: align_str = "center"
+    elif align & Qt.AlignRight: align_str = "right"
+    elif align & Qt.AlignJustify: align_str = "justify"
+    
+    color_str = color.name()
+    bg_str = ""
+    if bg_color and bg_color.alpha() > 0:
+        bg_str = f"background-color: {bg_color.name()};"
+        
+    style_str = f"color: {color_str}; {bg_str}"
+    if is_bold: style_str += " font-weight: bold;"
+    if is_italic: style_str += " font-style: italic;"
+    if is_underline: style_str += " text-decoration: underline;"
+    if font_size_px is not None:
+        style_str += f" font-size: {font_size_px}px;"
+
+    html = f"<div style='text-align: {align_str}; {style_str}'>"
+    
+    result = ""
+    current_lang = None
+    current_chunk = ""
+    
+    for char in text:
+        if '\u1780' <= char <= '\u17FF' or '\u19E0' <= char <= '\u19FF':
+            lang = 'kh'
+        elif char.isspace():
+            lang = current_lang if current_lang else 'en'
+        else:
+            lang = 'en'
+            
+        if lang != current_lang:
+            if current_chunk:
+                f_family = font_kh if current_lang == 'kh' else font_en
+                safe_chunk = current_chunk.replace('\n', '<br>')
+                result += f"<span style=\"font-family: '{f_family}';\">{safe_chunk}</span>"
+            current_chunk = char
+            current_lang = lang
+        else:
+            current_chunk += char
+            
+    if current_chunk:
+        f_family = font_kh if current_lang == 'kh' else font_en
+        safe_chunk = current_chunk.replace('\n', '<br>')
+        result += f"<span style=\"font-family: '{f_family}';\">{safe_chunk}</span>"
+        
+    html += result + "</div>"
+    return html
+
 class TextPreviewWidget(QWidget):
     """ Custom Widget សម្រាប់គូរទិដ្ឋភាពអក្សរធំ (Live Text Preview) """
     selectionChanged = pyqtSignal(int)
@@ -651,8 +737,14 @@ class TextPreviewWidget(QWidget):
         self.margin_right = 10
         
         self.text = ""
-        self.text_font = QFont("Khmer OS Muol Light", 50)
         self.text_color = QColor(0, 0, 0)
+        self.font_family_kh = "Khmer OS Muol Light"
+        self.font_family_en = "Arial"
+        self.base_font_size = 50.0
+        self.font_bold = False
+        self.font_italic = False
+        self.font_underline = False
+        self.text_bg_color = QColor(Qt.transparent)
         self.text_align = Qt.AlignCenter
         self.bg_color = QColor(255, 255, 255)
         self.auto_fit = False
@@ -681,7 +773,12 @@ class TextPreviewWidget(QWidget):
                 
                 self.lines_data.append({
                     'rect': new_rect,
-                    'font': QFont(self.text_font),
+                    'font_kh': self.font_family_kh,
+                    'font_en': self.font_family_en,
+                    'base_size': self.base_font_size,
+                    'bold': self.font_bold,
+                    'italic': self.font_italic,
+                    'underline': self.font_underline,
                     'color': QColor(self.text_color),
                     'bg_color': QColor(Qt.transparent)
                 })
@@ -840,7 +937,7 @@ class TextPreviewWidget(QWidget):
             
             if self.free_stretch:
                 lines = self.text.split('\n')
-                from PyQt5.QtGui import QPainterPath, QFontMetricsF, QBrush
+                from PyQt5.QtGui import QTextDocument
                 
                 # Make sure lines_data is synchronized if not already
                 if not self.lines_data:
@@ -856,38 +953,26 @@ class TextPreviewWidget(QWidget):
                     if bg_color.alpha() > 0:
                         painter.fillRect(rect_px, bg_color)
                         
-                    base_font = QFont(line_data['font'])
-                    base_font.setPixelSize(100)
-                    base_font.setBold(line_data.get('bold', False))
-                    base_font.setItalic(line_data.get('italic', False))
-                    base_font.setUnderline(line_data.get('underline', False))
+                    f_kh = line_data.get('font_kh', self.font_family_kh)
+                    f_en = line_data.get('font_en', self.font_family_en)
+                    is_b = line_data.get('bold', False)
+                    is_i = line_data.get('italic', False)
+                    is_u = line_data.get('underline', False)
+                    l_color = line_data.get('color', self.text_color)
                     
-                    path = QPainterPath()
-                    fm = QFontMetricsF(base_font)
+                    doc = QTextDocument()
+                    doc.setDocumentMargin(0)
+                    html = build_mixed_html(line, f_kh, f_en, l_color, None, is_b, is_i, is_u, Qt.AlignLeft, 100)
+                    doc.setHtml(html)
                     
-                    line_w = fm.horizontalAdvance(line)
-                    if self.text_align & Qt.AlignHCenter:
-                        x = -line_w / 2
-                    elif self.text_align & Qt.AlignRight:
-                        x = -line_w
-                    else:
-                        x = 0
-                        
-                    y = fm.ascent()
-                    path.addText(x, y, base_font, line)
-                    
-                    base_rect = path.boundingRect()
+                    base_rect = doc.documentLayout().documentSize()
                     
                     painter.save()
                     painter.translate(rect_px.x(), rect_px.y())
                     sx = rect_px.width() / base_rect.width() if base_rect.width() > 0 else 1
                     sy = rect_px.height() / base_rect.height() if base_rect.height() > 0 else 1
                     painter.scale(sx, sy)
-                    painter.translate(-base_rect.x(), -base_rect.y())
-                    
-                    painter.setPen(Qt.NoPen)
-                    painter.setBrush(QBrush(line_data['color']))
-                    painter.drawPath(path)
+                    doc.drawContents(painter)
                     painter.restore()
                     
                     # Draw selection border and handles only for the selected line
@@ -909,46 +994,181 @@ class TextPreviewWidget(QWidget):
 
                     
             else:
-                scaled_font = QFont(self.text_font)
                 rect = QRectF(m_left, m_top, m_right - m_left, m_bottom - m_top)
+                from PyQt5.QtGui import QTextDocument
+                doc = QTextDocument()
+                doc.setDocumentMargin(0)
+                
+                if hasattr(self, 'text_bg_color') and self.text_bg_color.alpha() > 0:
+                    painter.fillRect(rect, self.text_bg_color)
                 
                 if self.auto_fit:
-                    from PyQt5.QtGui import QFontMetricsF
                     min_size = 1
                     max_size = 5000
                     best_size = min_size
                     
                     while min_size <= max_size:
                         mid_size = (min_size + max_size) // 2
-                        scaled_font.setPixelSize(mid_size)
-                        fm = QFontMetricsF(scaled_font)
-                        br = fm.boundingRect(rect, self.text_align | Qt.TextWordWrap, self.text)
+                        html = build_mixed_html(self.text, self.font_family_kh, self.font_family_en, self.text_color, None, self.font_bold, self.font_italic, self.font_underline, self.text_align, mid_size)
+                        doc.setHtml(html)
+                        doc.setTextWidth(rect.width())
                         
-                        if br.width() <= rect.width() and br.height() <= rect.height():
+                        if doc.size().height() <= rect.height():
                             best_size = mid_size
                             min_size = mid_size + 1
                         else:
                             max_size = mid_size - 1
-                    scaled_font.setPixelSize(best_size)
+                    html = build_mixed_html(self.text, self.font_family_kh, self.font_family_en, self.text_color, None, self.font_bold, self.font_italic, self.font_underline, self.text_align, best_size)
+                    doc.setHtml(html)
+                    doc.setTextWidth(rect.width())
                 else:
                     pt_to_mm = 25.4 / 72.0
-                    size_mm = self.text_font.pointSizeF() * pt_to_mm
+                    size_mm = self.base_font_size * pt_to_mm
                     size_px = size_mm * scale
-                    scaled_font.setPixelSize(int(max(1, size_px)))
+                    html = build_mixed_html(self.text, self.font_family_kh, self.font_family_en, self.text_color, None, self.font_bold, self.font_italic, self.font_underline, self.text_align, int(max(1, size_px)))
+                    doc.setHtml(html)
+                    doc.setTextWidth(rect.width())
                     
-                painter.setFont(scaled_font)
-                painter.drawText(rect, self.text_align | Qt.TextWordWrap, self.text)
+                painter.save()
+                painter.translate(rect.topLeft())
+                doc.drawContents(painter)
+                painter.restore()
 
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import QThread, pyqtSignal, QPointF, QRectF, Qt, QRect, QSizeF
+from PyQt5.QtWidgets import QDialog, QGraphicsView, QGraphicsScene, QGraphicsRectItem
+from PyQt5.QtGui import QPen, QBrush, QColor, QMouseEvent
+
+class CropGraphicsView(QGraphicsView):
+    def __init__(self, pixmap, parent=None):
+        super().__init__(parent)
+        self.scene = QGraphicsScene(self)
+        self.setScene(self.scene)
+        
+        self.pixmap_item = self.scene.addPixmap(pixmap)
+        self.scene.setSceneRect(0, 0, pixmap.width(), pixmap.height())
+        
+        self.crop_rect_item = QGraphicsRectItem()
+        self.crop_rect_item.setPen(QPen(Qt.red, 3, Qt.DashLine))
+        self.crop_rect_item.setBrush(QBrush(QColor(255, 0, 0, 50)))
+        self.scene.addItem(self.crop_rect_item)
+        self.crop_rect_item.hide()
+        
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        
+        self.drawing_crop = False
+        self.origin = QPointF()
+        
+    def wheelEvent(self, event):
+        if event.modifiers() == Qt.NoModifier or event.modifiers() == Qt.ControlModifier:
+            factor = 1.15 if event.angleDelta().y() > 0 else 0.85
+            self.scale(factor, factor)
+        else:
+            super().wheelEvent(event)
+            
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if event.modifiers() & Qt.ShiftModifier:
+                self.setDragMode(QGraphicsView.ScrollHandDrag)
+                super().mousePressEvent(event)
+            else:
+                self.setDragMode(QGraphicsView.NoDrag)
+                self.drawing_crop = True
+                self.origin = self.mapToScene(event.pos())
+                self.crop_rect_item.setRect(QRectF(self.origin, QSizeF()))
+                self.crop_rect_item.show()
+        elif event.button() == Qt.MiddleButton:
+            self.setDragMode(QGraphicsView.ScrollHandDrag)
+            mock_event = QMouseEvent(event.type(), event.localPos(), event.windowPos(), event.screenPos(),
+                                     Qt.LeftButton, event.buttons() | Qt.LeftButton, event.modifiers())
+            super().mousePressEvent(mock_event)
+        else:
+            super().mousePressEvent(event)
+            
+    def mouseMoveEvent(self, event):
+        if self.drawing_crop:
+            current_point = self.mapToScene(event.pos())
+            self.crop_rect_item.setRect(QRectF(self.origin, current_point).normalized())
+        else:
+            super().mouseMoveEvent(event)
+            
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self.drawing_crop:
+                self.drawing_crop = False
+                self.setDragMode(QGraphicsView.ScrollHandDrag)
+            else:
+                super().mouseReleaseEvent(event)
+        elif event.button() == Qt.MiddleButton:
+            mock_event = QMouseEvent(event.type(), event.localPos(), event.windowPos(), event.screenPos(),
+                                     Qt.LeftButton, event.buttons() & ~Qt.LeftButton, event.modifiers())
+            super().mouseReleaseEvent(mock_event)
+            self.setDragMode(QGraphicsView.ScrollHandDrag)
+        else:
+            super().mouseReleaseEvent(event)
+            
+    def get_crop_rect(self):
+        if not self.crop_rect_item.isVisible():
+            return QRect()
+        return self.crop_rect_item.rect().toRect().intersected(self.pixmap_item.boundingRect().toRect())
+
+class ImageCropDialog(QDialog):
+    def __init__(self, image_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("កាត់រូបភាព / Crop Image")
+        self.image_path = image_path
+        
+        self.layout = QVBoxLayout(self)
+        self.pixmap = QPixmap(self.image_path)
+        
+        lbl_info = QLabel("<b>របៀបប្រើ៖</b> អូសម៉ៅស៍ឆ្វេងដើម្បីគូសប្រអប់កាត់អក្សរ | រំកិលកង់ម៉ៅស៍ ដើម្បីពង្រីក/ពង្រួម | ចុច Shift+ម៉ៅស៍ឆ្វេង ដើម្បីទាញរូបភាពចុះឡើង")
+        lbl_info.setStyleSheet("color: #333; padding: 5px; background: #e0f2fe; border-radius: 4px;")
+        self.layout.addWidget(lbl_info)
+        
+        self.crop_view = CropGraphicsView(self.pixmap)
+        self.layout.addWidget(self.crop_view)
+        
+        btn_layout = QHBoxLayout()
+        btn_crop = QPushButton("កាត់និងទាញអត្ថបទ / Crop & Extract")
+        btn_crop.setStyleSheet("background-color: #2b52ff; color: white; padding: 8px; font-weight: bold;")
+        btn_crop.clicked.connect(self.accept)
+        
+        btn_cancel = QPushButton("បោះបង់ / Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_crop)
+        self.layout.addLayout(btn_layout)
+        
+        self.resize(1000, 700)
+        
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.crop_view.fitInView(self.crop_view.scene.sceneRect(), Qt.KeepAspectRatio)
+        
+    def get_cropped_image(self):
+        rect = self.crop_view.get_crop_rect()
+        if rect.width() <= 0 or rect.height() <= 0:
+            return self.image_path
+            
+        cropped = self.pixmap.copy(rect)
+        import tempfile, os
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, "cropped_ocr_img.jpg")
+        cropped.save(temp_path, "JPG")
+        return temp_path
 
 class OCRWorker(QThread):
     finished_signal = pyqtSignal(str)
     error_signal = pyqtSignal(str)
     
-    def __init__(self, image_path, api_key):
+    def __init__(self, image_path, api_key, model_name):
         super().__init__()
         self.image_path = image_path
         self.api_key = api_key
+        self.model_name = model_name
         
     def run(self):
         try:
@@ -970,27 +1190,35 @@ class OCRWorker(QThread):
             
             prompt = "Extract all the text from this image exactly as it appears. Maintain the original language (e.g., Khmer or English) and spacing. Do not add any extra commentary or markdown formatting. Just return the text."
             
-            max_retries = 3
+            max_retries = 10  # Increase retries to handle long durations
+            delay = 2
             for attempt in range(max_retries):
                 try:
                     response = client.models.generate_content(
-                        model='gemini-3.5-flash',
+                        model=self.model_name,
                         contents=[img, prompt]
                     )
                     self.finished_signal.emit(response.text)
                     return
                 except Exception as e:
-                    if "503" in str(e) and attempt < max_retries - 1:
-                        time.sleep(2)
+                    err_str = str(e).lower()
+                    if ("503" in err_str or "timeout" in err_str or "unavailable" in err_str) and attempt < max_retries - 1:
+                        time.sleep(delay)
+                        delay = min(delay * 2, 10)  # Cap delay at 10 seconds
                     else:
                         raise e
         except Exception as e:
-            self.error_signal.emit(str(e))
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                msg = f"សូមអភ័យទោស! ចំនួនប្រើប្រាស់ API សម្រាប់ម៉ូដែលនេះត្រូវបានអស់ហើយ (Quota Exceeded)។\n\nព័ត៌មានលម្អិត (Error Details):\n{err_str}"
+                self.error_signal.emit(msg)
+            else:
+                self.error_signal.emit(err_str)
 
 class PhotoPrintApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("កម្មវិធីជំនួយការបោះពុម្ពរូបថត - Photo Print Studio")
+        self.setWindowTitle("Fast Print Text Photo")
         self.default_image_pixmap = None # Added default image pixmap
         from PyQt5.QtCore import QSettings
         self.settings = QSettings("PhotoPrintApp", "Settings")
@@ -1028,8 +1256,18 @@ class PhotoPrintApp(QMainWindow):
         main_layout = QHBoxLayout(self.tab1)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
-        # បង្កើត Preview Canvas ជាមុនសិន ដើម្បីឲ្យ Panel ផ្សេងៗអាចភ្ជាប់ (connect) ទៅវាបាន
-        self.preview_canvas = PreviewWidget()
+        # បង្កើតបញ្ជី Canvas សម្រាប់ទំព័រច្រើន
+        from PyQt5.QtWidgets import QScrollArea, QStackedWidget
+        self.preview_canvases = []
+        self.current_page_index = 0
+        
+        self.stacked_widget = QStackedWidget()
+        self.stacked_widget.setStyleSheet("background-color: transparent;")
+        
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet("QScrollArea { background-color: #dbe2e9; border: none; }")
+        self.scroll_area.setWidget(self.stacked_widget)
 
         # ---------------- LEFT PANEL ----------------
         left_panel = QWidget()
@@ -1183,12 +1421,12 @@ class PhotoPrintApp(QMainWindow):
         self.btn_dist_h = QPushButton("Distribute H")
         self.btn_dist_v = QPushButton("Distribute V")
 
-        self.btn_align_left.clicked.connect(self.preview_canvas.align_selected_left)
-        self.btn_align_top.clicked.connect(self.preview_canvas.align_selected_top)
-        self.btn_align_right.clicked.connect(self.preview_canvas.align_selected_right)
-        self.btn_align_bottom.clicked.connect(self.preview_canvas.align_selected_bottom)
-        self.btn_dist_h.clicked.connect(self.preview_canvas.distribute_horizontally)
-        self.btn_dist_v.clicked.connect(self.preview_canvas.distribute_vertically)
+        self.btn_align_left.clicked.connect(self.align_selected_left)
+        self.btn_align_top.clicked.connect(self.align_selected_top)
+        self.btn_align_right.clicked.connect(self.align_selected_right)
+        self.btn_align_bottom.clicked.connect(self.align_selected_bottom)
+        self.btn_dist_h.clicked.connect(self.distribute_horizontally)
+        self.btn_dist_v.clicked.connect(self.distribute_vertically)
 
         align_grid.addWidget(self.btn_align_left, 0, 0)
         align_grid.addWidget(self.btn_align_top, 0, 1)
@@ -1215,8 +1453,28 @@ class PhotoPrintApp(QMainWindow):
         mid_title.setFont(QFont("Khmer OS Battambang", 11))
         mid_layout.addWidget(mid_title)
         
-        self.preview_canvas.selectionChanged.connect(self.update_image_adjustment_buttons)
-        mid_layout.addWidget(self.preview_canvas)
+        mid_layout.addWidget(self.scroll_area)
+
+        # ប៊ូតុងបញ្ជាទំព័រ (Pagination Controls)
+        self.pagination_widget = QWidget()
+        pag_layout = QHBoxLayout(self.pagination_widget)
+        pag_layout.setContentsMargins(0, 5, 0, 0)
+        
+        self.btn_prev_page = QPushButton("◀ ត្រឡប់ក្រោយ / Prev")
+        self.btn_prev_page.clicked.connect(self.go_to_previous_page)
+        
+        self.lbl_page_info = QLabel("ទំព័រ / Page: 0 / 0")
+        self.lbl_page_info.setAlignment(Qt.AlignCenter)
+        
+        self.btn_next_page = QPushButton("ទៅមុខ / Next ▶")
+        self.btn_next_page.clicked.connect(self.go_to_next_page)
+        
+        pag_layout.addWidget(self.btn_prev_page)
+        pag_layout.addWidget(self.lbl_page_info)
+        pag_layout.addWidget(self.btn_next_page)
+        
+        mid_layout.addWidget(self.pagination_widget)
+        self.pagination_widget.setVisible(False)
 
         # ---------------- RIGHT PANEL ----------------
         right_panel = QWidget()
@@ -1339,6 +1597,44 @@ class PhotoPrintApp(QMainWindow):
         gb_img_adj.setLayout(gb_img_adj_layout)
         right_layout.addWidget(gb_img_adj)
 
+        # 8. ច្រើនរូបក្នុងមួយសន្លឹក (Multi-Image Grid)
+        gb_grid_mode = QGroupBox("៨. ច្រើនរូបក្នុងមួយសន្លឹក / Multi-Image Grid")
+        gb_grid_mode_layout = QVBoxLayout()
+        
+        self.chk_enable_grid = QCheckBox("ប្រើប្រាស់មុខងារនេះ / Enable Grid Mode")
+        self.chk_enable_grid.stateChanged.connect(self.toggle_grid_mode)
+        gb_grid_mode_layout.addWidget(self.chk_enable_grid)
+        
+        grid_rc_layout = QGridLayout()
+        grid_rc_layout.addWidget(QLabel("ជួរឈរ (Columns):"), 0, 0)
+        self.sb_grid_cols = QSpinBox(); self.sb_grid_cols.setRange(1, 100); self.sb_grid_cols.setValue(3)
+        self.sb_grid_cols.valueChanged.connect(self.calculate_layout)
+        self.sb_grid_cols.setEnabled(False)
+        grid_rc_layout.addWidget(self.sb_grid_cols, 0, 1)
+        
+        grid_rc_layout.addWidget(QLabel("ជួរដេក (Rows):"), 0, 2)
+        self.sb_grid_rows = QSpinBox(); self.sb_grid_rows.setRange(1, 100); self.sb_grid_rows.setValue(4)
+        self.sb_grid_rows.valueChanged.connect(self.calculate_layout)
+        self.sb_grid_rows.setEnabled(False)
+        grid_rc_layout.addWidget(self.sb_grid_rows, 0, 3)
+        
+        gb_grid_mode_layout.addLayout(grid_rc_layout)
+        
+        self.rb_grid_same_size = QRadioButton("ធ្វើឲ្យទំហំប៉ុនគ្នា / Make same size of image")
+        self.rb_grid_same_size.setChecked(True)
+        self.rb_grid_same_size.setEnabled(False)
+        self.rb_grid_same_size.toggled.connect(self.calculate_layout)
+        
+        self.rb_grid_original_size = QRadioButton("រក្សាទំហំដើម / Original size of image")
+        self.rb_grid_original_size.setEnabled(False)
+        self.rb_grid_original_size.toggled.connect(self.calculate_layout)
+        
+        gb_grid_mode_layout.addWidget(self.rb_grid_same_size)
+        gb_grid_mode_layout.addWidget(self.rb_grid_original_size)
+        
+        gb_grid_mode.setLayout(gb_grid_mode_layout)
+        right_layout.addWidget(gb_grid_mode)
+
         right_layout.addStretch()
 
         # Action Buttons
@@ -1364,7 +1660,7 @@ class PhotoPrintApp(QMainWindow):
         btn_print.setStyleSheet("background-color: #5850ec; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
         btn_print.clicked.connect(self.import_to_foxit)
         
-        btn_support = QLabel("សរសេរដោយ៖ ដែកូដថ្មី Ver.1.0.2")
+        btn_support = QLabel("សរសេរដោយ៖ ដែកូដថ្មី Ver.1.0.4")
         btn_support.setStyleSheet(" color: green ; padding: 12px; font-weight: bold; border-radius: 5px;")
 
         right_layout.addLayout(h_save_layout)
@@ -1409,6 +1705,22 @@ class PhotoPrintApp(QMainWindow):
         gb_text = QGroupBox("១. អត្ថបទ / Text Input")
         gb_text_layout = QVBoxLayout()
         
+        h_model_layout = QHBoxLayout()
+        h_model_layout.addWidget(QLabel("ម៉ូដែល AI / AI Model:"))
+        self.cb_ai_model = QComboBox()
+        self.cb_ai_model.addItems([
+            "gemini-2.5-flash",
+            "gemini-3.5-flash"
+        ])
+        h_model_layout.addWidget(self.cb_ai_model)
+        
+        self.btn_change_api = QPushButton("🔑 ផ្លាស់ប្តូរ API Key")
+        self.btn_change_api.setStyleSheet("background-color: #f59e0b; color: white; padding: 5px; border-radius: 3px; font-weight: bold;")
+        self.btn_change_api.clicked.connect(self.change_api_key)
+        h_model_layout.addWidget(self.btn_change_api)
+        
+        gb_text_layout.addLayout(h_model_layout)
+        
         self.btn_ai_ocr = QPushButton("ទាញអត្ថបទពីរូបភាព (AI) / Extract Text from Image")
         self.btn_ai_ocr.setStyleSheet("background-color: #2b52ff; color: white; padding: 8px; border-radius: 5px; font-weight: bold;")
         self.btn_ai_ocr.clicked.connect(self.extract_text_from_image)
@@ -1420,28 +1732,65 @@ class PhotoPrintApp(QMainWindow):
         self.txt_banner.setFont(font_battambang)
         self.txt_banner.textChanged.connect(self.update_text_preview)
         gb_text_layout.addWidget(self.txt_banner)
+        
+        self.btn_clear_text = QPushButton("លុបអត្ថបទ / Clear Text")
+        self.btn_clear_text.setStyleSheet("background-color: #ef4444; color: white; padding: 8px; border-radius: 5px; font-weight: bold;")
+        self.btn_clear_text.clicked.connect(self.txt_banner.clear)
+        gb_text_layout.addWidget(self.btn_clear_text)
         gb_text.setLayout(gb_text_layout)
         left_layout.addWidget(gb_text)
+
+        self.btn_clear_text = QPushButton("លុបអត្ថបទ / Clear Text")
+        self.btn_clear_text.setStyleSheet("background-color: #ef4444; color: white; padding: 8px; border-radius: 5px; font-weight: bold;")
+        self.btn_clear_text.clicked.connect(self.txt_banner.clear)
         
         # Font Settings
         gb_font = QGroupBox("២. កំណត់អក្សរ / Font Settings")
         gb_font_layout = QVBoxLayout()
         
-        self.cb_font = QComboBox()
-        self.cb_font.setEditable(True)
-        freq_fonts = ["AKbalthom Moul 4", "Khmer OS Muol Light", "Times New Roman", "Khmer OS Battambang", "Arial"]
-        self.cb_font.addItems(freq_fonts)
-        self.cb_font.insertSeparator(len(freq_fonts))
+        self.cb_font_kh = QComboBox()
+        self.cb_font_en = QComboBox()
+        
+        from PyQt5.QtCore import QSettings
+        self.settings = QSettings("PhotoPrintApp", "Settings")
+        
         from PyQt5.QtGui import QFontDatabase
         all_fonts = QFontDatabase().families()
+        freq_fonts = ["AKbalthom Moul 4", "Khmer OS Muol Light", "Khmer OS Battambang", "Times New Roman", "Arial", "Roboto", "Inter"]
+        
+        h_fonts_layout = QHBoxLayout()
+        
+        # Khmer Font
+        v_kh_layout = QVBoxLayout()
+        v_kh_layout.addWidget(QLabel("អក្សរខ្មែរ (Khmer Font):"))
+        self.cb_font_kh.setEditable(True)
+        self.cb_font_kh.addItems(freq_fonts)
+        self.cb_font_kh.insertSeparator(len(freq_fonts))
         for f in all_fonts:
             if f not in freq_fonts:
-                self.cb_font.addItem(f)
-        self.cb_font.setCurrentText("Khmer OS Muol Light")
-        self.cb_font.currentTextChanged.connect(self.update_text_preview)
+                self.cb_font_kh.addItem(f)
+        saved_kh_font = self.settings.value("font_kh", "Khmer OS Muol Light")
+        self.cb_font_kh.setCurrentText(saved_kh_font)
+        self.cb_font_kh.currentTextChanged.connect(self.save_fonts)
+        v_kh_layout.addWidget(self.cb_font_kh)
+        h_fonts_layout.addLayout(v_kh_layout)
         
-        gb_font_layout.addWidget(QLabel("ប្រភេទអក្សរ / Font Family:"))
-        gb_font_layout.addWidget(self.cb_font)
+        # English Font
+        v_en_layout = QVBoxLayout()
+        v_en_layout.addWidget(QLabel("អក្សរអង់គ្លេស (English Font):"))
+        self.cb_font_en.setEditable(True)
+        self.cb_font_en.addItems(freq_fonts)
+        self.cb_font_en.insertSeparator(len(freq_fonts))
+        for f in all_fonts:
+            if f not in freq_fonts:
+                self.cb_font_en.addItem(f)
+        saved_en_font = self.settings.value("font_en", "Arial")
+        self.cb_font_en.setCurrentText(saved_en_font)
+        self.cb_font_en.currentTextChanged.connect(self.save_fonts)
+        v_en_layout.addWidget(self.cb_font_en)
+        h_fonts_layout.addLayout(v_en_layout)
+        
+        gb_font_layout.addLayout(h_fonts_layout)
         
         h_font = QHBoxLayout()
         
@@ -1679,16 +2028,23 @@ class PhotoPrintApp(QMainWindow):
             
         self.text_preview.update()
 
+    def save_fonts(self):
+        self.settings.setValue("font_kh", self.cb_font_kh.currentText())
+        self.settings.setValue("font_en", self.cb_font_en.currentText())
+        self.update_text_preview()
+
     def update_text_preview(self):
         self.text_preview.set_text(self.txt_banner.toPlainText())
-        font = QFont(self.cb_font.currentText())
-        font.setPointSizeF(self.sb_font_size.value())
-        font.setBold(self.btn_bold.isChecked())
-        font.setItalic(self.btn_italic.isChecked())
-        font.setUnderline(self.btn_underline.isChecked())
         
-        self.text_preview.text_font = font
+        self.text_preview.font_family_kh = self.cb_font_kh.currentText()
+        self.text_preview.font_family_en = self.cb_font_en.currentText()
+        self.text_preview.base_font_size = self.sb_font_size.value()
+        self.text_preview.font_bold = self.btn_bold.isChecked()
+        self.text_preview.font_italic = self.btn_italic.isChecked()
+        self.text_preview.font_underline = self.btn_underline.isChecked()
+        
         self.text_preview.text_color = self.text_color
+        self.text_preview.text_bg_color = self.text_bg_color
         self.text_preview.bg_color = self.bg_color
         self.text_preview.text_align = self.text_align
         self.text_preview.auto_fit = self.chk_auto_fit.isChecked()
@@ -1696,7 +2052,9 @@ class PhotoPrintApp(QMainWindow):
         if self.chk_free_stretch.isChecked() and self.text_preview.lines_data:
             idx = self.text_preview.selected_line_idx
             if 0 <= idx < len(self.text_preview.lines_data):
-                self.text_preview.lines_data[idx]['font'] = font
+                self.text_preview.lines_data[idx]['font_kh'] = self.cb_font_kh.currentText()
+                self.text_preview.lines_data[idx]['font_en'] = self.cb_font_en.currentText()
+                self.text_preview.lines_data[idx]['base_size'] = self.sb_font_size.value()
                 self.text_preview.lines_data[idx]['color'] = self.text_color
                 self.text_preview.lines_data[idx]['bold'] = self.btn_bold.isChecked()
                 self.text_preview.lines_data[idx]['italic'] = self.btn_italic.isChecked()
@@ -1713,9 +2071,13 @@ class PhotoPrintApp(QMainWindow):
         if 0 <= idx < len(self.text_preview.lines_data):
             data = self.text_preview.lines_data[idx]
             
-            self.cb_font.blockSignals(True)
-            self.cb_font.setCurrentText(data['font'].family())
-            self.cb_font.blockSignals(False)
+            self.cb_font_kh.blockSignals(True)
+            self.cb_font_kh.setCurrentText(data.get('font_kh', self.cb_font_kh.currentText()))
+            self.cb_font_kh.blockSignals(False)
+            
+            self.cb_font_en.blockSignals(True)
+            self.cb_font_en.setCurrentText(data.get('font_en', self.cb_font_en.currentText()))
+            self.cb_font_en.blockSignals(False)
             
             self.btn_bold.blockSignals(True)
             self.btn_bold.setChecked(data.get('bold', False))
@@ -1812,6 +2174,35 @@ class PhotoPrintApp(QMainWindow):
             self.text_align = self.text_h_align | self.text_v_align
             self.update_text_preview()
 
+    def change_api_key(self):
+        from PyQt5.QtWidgets import QInputDialog, QLineEdit, QMessageBox
+        
+        pwd, ok_pwd = QInputDialog.getText(
+            self,
+            "ទាមទារលេខសម្ងាត់ / Password Required",
+            "សូមបញ្ចូលលេខសម្ងាត់ ដើម្បីផ្លាស់ប្តូរ API Key៖",
+            QLineEdit.Password
+        )
+        
+        if not ok_pwd:
+            return
+            
+        if pwd != "1234":
+            QMessageBox.warning(self, "បរាជ័យ / Error", "លេខសម្ងាត់មិនត្រឹមត្រូវទេ! / Incorrect Password!")
+            return
+            
+        current_key = self.settings.value("gemini_api_key", "")
+        api_key, ok = QInputDialog.getText(
+            self, 
+            "ផ្លាស់ប្តូរ Gemini API Key / Change API Key", 
+            "សូមបញ្ចូល Google Gemini API Key ថ្មីរបស់អ្នក៖\n(ទុកចំហរទទេដើម្បីលុប Key ចាស់ចេញ)",
+            QLineEdit.Password,
+            current_key
+        )
+        if ok:
+            self.settings.setValue("gemini_api_key", api_key.strip())
+            QMessageBox.information(self, "ជោគជ័យ / Success", "API Key ត្រូវបានកែប្រែដោយជោគជ័យ! / API Key has been updated!")
+
     def extract_text_from_image(self):
         from PyQt5.QtWidgets import QInputDialog, QLineEdit, QFileDialog, QMessageBox
         
@@ -1836,13 +2227,18 @@ class PhotoPrintApp(QMainWindow):
             "Images (*.png *.jpg *.jpeg *.bmp)"
         )
         if file_name:
-            self.btn_ai_ocr.setText("កំពុងទាញអត្ថបទ... / Processing...")
-            self.btn_ai_ocr.setEnabled(False)
-            
-            self.ocr_worker = OCRWorker(file_name, api_key)
-            self.ocr_worker.finished_signal.connect(self.on_ocr_success)
-            self.ocr_worker.error_signal.connect(self.on_ocr_error)
-            self.ocr_worker.start()
+            dialog = ImageCropDialog(file_name, self)
+            if dialog.exec_():
+                final_image_path = dialog.get_cropped_image()
+                
+                self.btn_ai_ocr.setText("កំពុងទាញអត្ថបទ... / Processing...")
+                self.btn_ai_ocr.setEnabled(False)
+                
+                selected_model = self.cb_ai_model.currentText()
+                self.ocr_worker = OCRWorker(final_image_path, api_key, selected_model)
+                self.ocr_worker.finished_signal.connect(self.on_ocr_success)
+                self.ocr_worker.error_signal.connect(self.on_ocr_error)
+                self.ocr_worker.start()
 
     def on_ocr_success(self, text):
         self.btn_ai_ocr.setText("ទាញអត្ថបទពីរូបភាព (AI) / Extract Text from Image")
@@ -1903,7 +2299,7 @@ class PhotoPrintApp(QMainWindow):
             painter.setPen(self.text_color)
             
             if self.chk_free_stretch.isChecked():
-                from PyQt5.QtGui import QPainterPath, QFontMetricsF, QBrush
+                from PyQt5.QtGui import QTextDocument
                 lines = self.text_preview.text.split('\n')
                 
                 for i, line in enumerate(lines):
@@ -1916,71 +2312,70 @@ class PhotoPrintApp(QMainWindow):
                     if bg_color.alpha() > 0:
                         painter.fillRect(rect_px, bg_color)
                         
-                    base_font = QFont(line_data['font'])
-                    base_font.setPixelSize(100)
-                    base_font.setBold(line_data.get('bold', False))
-                    base_font.setItalic(line_data.get('italic', False))
-                    base_font.setUnderline(line_data.get('underline', False))
+                    f_kh = line_data.get('font_kh', self.text_preview.font_family_kh)
+                    f_en = line_data.get('font_en', self.text_preview.font_family_en)
+                    is_b = line_data.get('bold', False)
+                    is_i = line_data.get('italic', False)
+                    is_u = line_data.get('underline', False)
+                    l_color = line_data.get('color', self.text_color)
                     
-                    path = QPainterPath()
-                    fm = QFontMetricsF(base_font)
+                    doc = QTextDocument()
+                    doc.setDocumentMargin(0)
+                    html = build_mixed_html(line, f_kh, f_en, l_color, None, is_b, is_i, is_u, Qt.AlignLeft, 100)
+                    doc.setHtml(html)
                     
-                    line_w = fm.horizontalAdvance(line)
-                    if self.text_align & Qt.AlignHCenter:
-                        x = -line_w / 2
-                    elif self.text_align & Qt.AlignRight:
-                        x = -line_w
-                    else:
-                        x = 0
-                        
-                    y = fm.ascent()
-                    path.addText(x, y, base_font, line)
-                    
-                    base_rect = path.boundingRect()
+                    base_rect = doc.documentLayout().documentSize()
                     
                     painter.save()
                     painter.translate(rect_px.x(), rect_px.y())
                     sx = rect_px.width() / base_rect.width() if base_rect.width() > 0 else 1
                     sy = rect_px.height() / base_rect.height() if base_rect.height() > 0 else 1
                     painter.scale(sx, sy)
-                    painter.translate(-base_rect.x(), -base_rect.y())
-                    
-                    painter.setPen(Qt.NoPen)
-                    painter.setBrush(QBrush(line_data['color']))
-                    painter.drawPath(path)
+                    doc.drawContents(painter)
                     painter.restore()
             else:
-                scaled_font = QFont(self.text_preview.text_font)
                 m = self.sb_t_margin.value()
                 m_px = m * scale
                 rect = QRectF(m_px, m_px, (paper_w - 2*m) * scale, (paper_h - 2*m) * scale)
                 
+                from PyQt5.QtGui import QTextDocument
+                doc = QTextDocument()
+                doc.setDocumentMargin(0)
+                
+                if hasattr(self.text_preview, 'text_bg_color') and self.text_preview.text_bg_color.alpha() > 0:
+                    painter.fillRect(rect, self.text_preview.text_bg_color)
+                
                 if self.chk_auto_fit.isChecked():
-                    from PyQt5.QtGui import QFontMetricsF
                     min_size = 1
                     max_size = 5000
                     best_size = min_size
                     
                     while min_size <= max_size:
                         mid_size = (min_size + max_size) // 2
-                        scaled_font.setPixelSize(mid_size)
-                        fm = QFontMetricsF(scaled_font)
-                        br = fm.boundingRect(rect, self.text_align | Qt.TextWordWrap, self.text_preview.text)
+                        html = build_mixed_html(self.text_preview.text, self.text_preview.font_family_kh, self.text_preview.font_family_en, self.text_preview.text_color, None, self.text_preview.font_bold, self.text_preview.font_italic, self.text_preview.font_underline, self.text_align, mid_size)
+                        doc.setHtml(html)
+                        doc.setTextWidth(rect.width())
                         
-                        if br.width() <= rect.width() and br.height() <= rect.height():
+                        if doc.size().height() <= rect.height():
                             best_size = mid_size
                             min_size = mid_size + 1
                         else:
                             max_size = mid_size - 1
-                    scaled_font.setPixelSize(best_size)
+                    html = build_mixed_html(self.text_preview.text, self.text_preview.font_family_kh, self.text_preview.font_family_en, self.text_preview.text_color, None, self.text_preview.font_bold, self.text_preview.font_italic, self.text_preview.font_underline, self.text_align, best_size)
+                    doc.setHtml(html)
+                    doc.setTextWidth(rect.width())
                 else:
                     pt_to_mm = 25.4 / 72.0
-                    size_mm = self.text_preview.text_font.pointSizeF() * pt_to_mm
+                    size_mm = self.text_preview.base_font_size * pt_to_mm
                     size_px = size_mm * scale
-                    scaled_font.setPixelSize(int(max(1, size_px)))
+                    html = build_mixed_html(self.text_preview.text, self.text_preview.font_family_kh, self.text_preview.font_family_en, self.text_preview.text_color, None, self.text_preview.font_bold, self.text_preview.font_italic, self.text_preview.font_underline, self.text_align, int(max(1, size_px)))
+                    doc.setHtml(html)
+                    doc.setTextWidth(rect.width())
                     
-                painter.setFont(scaled_font)
-                painter.drawText(rect, self.text_align | Qt.TextWordWrap, self.text_preview.text)
+                painter.save()
+                painter.translate(rect.topLeft())
+                doc.drawContents(painter)
+                painter.restore()
             
         painter.end()
         if show_msg:
@@ -2003,34 +2398,69 @@ class PhotoPrintApp(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "កំហុស / Error", f"មិនអាចបើកកម្មវិធី Foxit PDF បានទេ:\n{str(e)}")
 
+    def go_to_previous_page(self):
+        if self.current_page_index > 0:
+            self.current_page_index -= 1
+            self.stacked_widget.setCurrentIndex(self.current_page_index)
+            self.update_pagination_ui()
+
+    def go_to_next_page(self):
+        if self.current_page_index < len(self.preview_canvases) - 1:
+            self.current_page_index += 1
+            self.stacked_widget.setCurrentIndex(self.current_page_index)
+            self.update_pagination_ui()
+
+    def update_pagination_ui(self):
+        total_pages = len(self.preview_canvases)
+        if total_pages <= 1:
+            self.pagination_widget.setVisible(False)
+        else:
+            self.pagination_widget.setVisible(True)
+            self.lbl_page_info.setText(f"ទំព័រ / Page: {self.current_page_index + 1} / {total_pages}")
+            self.btn_prev_page.setEnabled(self.current_page_index > 0)
+            self.btn_next_page.setEnabled(self.current_page_index < total_pages - 1)
+
+    def align_selected_left(self):
+        for c in self.preview_canvases: c.align_selected_left()
+    def align_selected_top(self):
+        for c in self.preview_canvases: c.align_selected_top()
+    def align_selected_right(self):
+        for c in self.preview_canvases: c.align_selected_right()
+    def align_selected_bottom(self):
+        for c in self.preview_canvases: c.align_selected_bottom()
+    def distribute_horizontally(self):
+        for c in self.preview_canvases: c.distribute_horizontally()
+    def distribute_vertically(self):
+        for c in self.preview_canvases: c.distribute_vertically()
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Delete:
             self.clear_selected_image()
         elif event.key() == Qt.Key_R:
-            self.preview_canvas.rotate_selected_photos()
+            for c in self.preview_canvases: c.rotate_selected_photos()
         elif event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
             if event.modifiers() & Qt.ControlModifier:
                 # ប្រើ Ctrl + Arrow សម្រាប់រំកិលសាច់រូបភាព (Pan inside Cover mode)
                 step = 20 if (event.modifiers() & Qt.ShiftModifier) else 5
                 if event.key() == Qt.Key_Up:
-                    self.preview_canvas.pan_selected_photos(0, -step)
+                    for c in self.preview_canvases: c.pan_selected_photos(0, -step)
                 elif event.key() == Qt.Key_Down:
-                    self.preview_canvas.pan_selected_photos(0, step)
+                    for c in self.preview_canvases: c.pan_selected_photos(0, step)
                 elif event.key() == Qt.Key_Left:
-                    self.preview_canvas.pan_selected_photos(-step, 0)
+                    for c in self.preview_canvases: c.pan_selected_photos(-step, 0)
                 elif event.key() == Qt.Key_Right:
-                    self.preview_canvas.pan_selected_photos(step, 0)
+                    for c in self.preview_canvases: c.pan_selected_photos(step, 0)
             else:
                 # ប្រើ Arrow ធម្មតា សម្រាប់រំកិលប្រអប់រូបភាពនៅលើក្រដាស
                 step = 5.0 if (event.modifiers() & Qt.ShiftModifier) else 0.5
                 if event.key() == Qt.Key_Up:
-                    self.preview_canvas.nudge_selected_photos(0, -step)
+                    for c in self.preview_canvases: c.nudge_selected_photos(0, -step)
                 elif event.key() == Qt.Key_Down:
-                    self.preview_canvas.nudge_selected_photos(0, step)
+                    for c in self.preview_canvases: c.nudge_selected_photos(0, step)
                 elif event.key() == Qt.Key_Left:
-                    self.preview_canvas.nudge_selected_photos(-step, 0)
+                    for c in self.preview_canvases: c.nudge_selected_photos(-step, 0)
                 elif event.key() == Qt.Key_Right:
-                    self.preview_canvas.nudge_selected_photos(step, 0)
+                    for c in self.preview_canvases: c.nudge_selected_photos(step, 0)
         else:
             super().keyPressEvent(event)
 
@@ -2096,33 +2526,16 @@ class PhotoPrintApp(QMainWindow):
         if not file_names:
             return
 
+        self.loaded_images = file_names
+        
         if len(file_names) == 1:
-            # ករណីជ្រើសរើសរូបភាពតែ ១: កំណត់ជា Default ហើយបំពេញគ្រប់ Slot ទាំងអស់
             self.default_image_pixmap = QPixmap(file_names[0])
-            self.preview_canvas.set_default_image_pixmap(self.default_image_pixmap)
             self.lbl_image_status.setText(f"<i>បានជ្រើសរើស: {file_names[0].split('/')[-1]}</i>")
-            
-            self.calculate_layout() # បង្កើត Grid ឡើងវិញដោយប្រើរូបភាព Default
-            for p in self.preview_canvas.photo_positions:
-                p['image_pixmap'] = self.default_image_pixmap
         else:
-            # ករណីជ្រើសរើសច្រើន: ដាក់រូបតាមលំដាប់ ហើយទុក Slot ដែលសល់ឲ្យនៅទំនេរ (None)
             self.default_image_pixmap = None
-            self.preview_canvas.set_default_image_pixmap(None)
             self.lbl_image_status.setText(f"<i>បានជ្រើសរើសរូបភាពចំនួន {len(file_names)} ឯកសារ</i>")
             
-            self.calculate_layout() # Refresh grid
-            
-            # បញ្ចូលរូបភាពតាម Slot និងសម្អាត Slot ដែលនៅសល់
-            for i, p in enumerate(self.preview_canvas.photo_positions):
-                if i < len(file_names):
-                    pix = QPixmap(file_names[i])
-                    p['image_pixmap'] = pix if not pix.isNull() else None
-                else:
-                    p['image_pixmap'] = None
-            
-            self.update_image_adjustment_buttons()
-            self.preview_canvas.update()
+        self.calculate_layout()
             
     def toggle_auto_center(self):
         is_h = self.chk_center_h.isChecked()
@@ -2136,14 +2549,16 @@ class PhotoPrintApp(QMainWindow):
         self.calculate_layout()
         
     def toggle_border(self):
-        self.preview_canvas.show_border = self.chk_show_border.isChecked()
-        self.preview_canvas.update()
+        for canvas in self.preview_canvases:
+            canvas.show_border = self.chk_show_border.isChecked()
+            canvas.update()
         
     def toggle_manual_mode(self):
         is_manual = self.rb_manual_layout.isChecked()
         self.lbl_manual_tip.setVisible(is_manual)
         self.wg_align.setVisible(is_manual)
-        self.preview_canvas.is_manual = is_manual
+        for canvas in self.preview_canvases:
+            canvas.is_manual = is_manual
         self.calculate_layout()
         
     def change_image_mode(self):
@@ -2152,82 +2567,100 @@ class PhotoPrintApp(QMainWindow):
         self.update_image_adjustment_buttons()
         
         if not is_cover:
-            for p in self.preview_canvas.photo_positions:
-                p['selected'] = False
+            for canvas in self.preview_canvases:
+                for p in canvas.photo_positions:
+                    p['selected'] = False
             
-        if self.rb_img_fill.isChecked():
-            self.preview_canvas.image_mode = 'fill'
-        elif is_cover:
-            self.preview_canvas.image_mode = 'cover'
-        elif self.rb_img_contain.isChecked():
-            self.preview_canvas.image_mode = 'contain'
-        self.preview_canvas.update()
+        mode = 'fill'
+        if getattr(self, 'chk_enable_grid', None) and self.chk_enable_grid.isChecked() and getattr(self, 'rb_grid_original_size', None) and self.rb_grid_original_size.isChecked():
+            mode = 'contain'
+        else:
+            if self.rb_img_fill.isChecked(): mode = 'fill'
+            elif is_cover: mode = 'cover'
+            elif self.rb_img_contain.isChecked(): mode = 'contain'
+            
+        for canvas in self.preview_canvases:
+            canvas.image_mode = mode
+            canvas.update()
         
     def update_image_adjustment_buttons(self):
-        # ពិនិត្យមើលថាមានរូបថតណាមួយត្រូវបាន Select ដែរឬទេ
-        has_selection = any(p.get('selected', False) for p in self.preview_canvas.photo_positions)
+        has_selection = any(p.get('selected', False) for canvas in self.preview_canvases for p in canvas.photo_positions)
         
-        # អនុញ្ញាតឱ្យប្តូររូបភាព និងលុប ប្រសិនបើមានការ Select (មិនខ្វល់ថា Mode ណាទេ)
         self.btn_change_selected_image.setEnabled(has_selection)
         
-        # កំណត់រូបភាពដើមវិញ បានលុះត្រាតែមានរូបភាពដើមដែលបាន Load រួច
-        has_default = self.default_image_pixmap is not None and not self.default_image_pixmap.isNull()
+        has_default = hasattr(self, 'default_image_pixmap') and self.default_image_pixmap is not None and not self.default_image_pixmap.isNull()
         self.btn_reset_selected_image.setEnabled(has_selection and has_default)
         
         self.lbl_adj_tip.setVisible(not has_selection)
 
     def select_all_photos(self):
-        for p in self.preview_canvas.photo_positions:
-            p['selected'] = True
+        for canvas in self.preview_canvases:
+            for p in canvas.photo_positions:
+                p['selected'] = True
+            canvas.update()
         self.update_image_adjustment_buttons()
-        self.preview_canvas.update()
         
     def deselect_all_photos(self):
-        for p in self.preview_canvas.photo_positions:
-            p['selected'] = False
+        for canvas in self.preview_canvases:
+            for p in canvas.photo_positions:
+                p['selected'] = False
+            canvas.update()
         self.update_image_adjustment_buttons()
-        self.preview_canvas.update()
     
     def change_selected_image(self):
         options = QFileDialog.Options()
         file_names, _ = QFileDialog.getOpenFileNames(self, "ជ្រើសរើសរូបភាពថ្មី / Choose New Photos", "", "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
         if file_names:
-            # ទាញយក Slot ទាំងអស់ដែលបានជ្រើសរើស (Selected)
-            selected_slots = [p for p in self.preview_canvas.photo_positions if p.get('selected', False)]
-            
-            # បញ្ចូលរូបភាពនីមួយៗទៅក្នុង Slot តាមលំដាប់ដែលបានជ្រើសរើសរូបភាព
+            selected_slots = [p for canvas in self.preview_canvases for p in canvas.photo_positions if p.get('selected', False)]
             for i, file_path in enumerate(file_names):
                 if i < len(selected_slots):
                     new_pixmap = QPixmap(file_path)
                     if not new_pixmap.isNull():
                         selected_slots[i]['image_pixmap'] = new_pixmap
-            
-            self.preview_canvas.update()
+            for canvas in self.preview_canvases:
+                canvas.update()
             self.update_image_adjustment_buttons()
 
     def reset_selected_image(self):
-        if self.default_image_pixmap and not self.default_image_pixmap.isNull():
-            for p in self.preview_canvas.photo_positions:
-                if p.get('selected', False):
-                    p['image_pixmap'] = self.default_image_pixmap
-            self.preview_canvas.update()
+        if hasattr(self, 'default_image_pixmap') and self.default_image_pixmap and not self.default_image_pixmap.isNull():
+            for canvas in self.preview_canvases:
+                for p in canvas.photo_positions:
+                    if p.get('selected', False):
+                        p['image_pixmap'] = self.default_image_pixmap
+                canvas.update()
             self.update_image_adjustment_buttons()
         else:
-            # If no default image, clearing is the same as resetting
             self.clear_selected_image()
 
     def clear_selected_image(self):
-        for p in self.preview_canvas.photo_positions:
-            if p.get('selected', False):
-                p['image_pixmap'] = None
-                # Also reset pan/scale if clearing the image
-                p['scale'] = 1.0
-                p['pan_x'] = 0.0
-                p['pan_y'] = 0.0
-        self.preview_canvas.update()
+        for canvas in self.preview_canvases:
+            for p in canvas.photo_positions:
+                if p.get('selected', False):
+                    p['image_pixmap'] = None
+                    p['scale'] = 1.0
+                    p['pan_x'] = 0.0
+                    p['pan_y'] = 0.0
+            canvas.update()
         self.update_image_adjustment_buttons()
 
 
+
+    def toggle_grid_mode(self):
+        is_grid = self.chk_enable_grid.isChecked()
+        self.sb_grid_cols.setEnabled(is_grid)
+        self.sb_grid_rows.setEnabled(is_grid)
+        self.rb_grid_same_size.setEnabled(is_grid)
+        self.rb_grid_original_size.setEnabled(is_grid)
+        
+        self.cb_p_unit.setEnabled(not is_grid)
+        self.sb_dpi.setEnabled(not is_grid)
+        for g in self.size_groups:
+            g['chk'].setEnabled(not is_grid)
+            g['w'].setEnabled(not is_grid)
+            g['h'].setEnabled(not is_grid)
+            g['qty'].setEnabled(not is_grid)
+            
+        self.calculate_layout()
 
     def calculate_layout(self):
         paper_w = self.sb_width.value()
@@ -2241,25 +2674,6 @@ class PhotoPrintApp(QMainWindow):
         # តម្លៃមធ្យមសម្រាប់ប្រើក្នុងការគណនាប្លង់ (Fallback values)
         photo_w, photo_h = 30.0, 40.0
         val_w, val_h = 3.0, 4.0
-
-        for g in self.size_groups:
-            if g['chk'].isChecked() and g['qty'].value() > 0:
-                vw, vh = g['w'].value(), g['h'].value()
-                # បំប្លែងខ្នាតទៅ mm
-                if unit == "cm": pw, ph = vw * 10, vh * 10
-                elif unit == "mm": pw, ph = vw, vh
-                elif unit == "inch": pw, ph = vw * 25.4, vh * 25.4
-                elif unit == "pixel": pw, ph = vw * (25.4 / current_dpi), vh * (25.4 / current_dpi)
-                
-                active_configs.append({
-                    'w': pw, 'h': ph, 
-                    'qty': g['qty'].value(), 
-                    'label': f"{vw:g}x{vh:g} {unit}"
-                })
-                total_print_qty += g['qty'].value()
-                if len(active_configs) == 1:
-                    photo_w, photo_h, val_w, val_h = pw, ph, vw, vh
-        
         margin_t = self.sb_margin_top.value()
         margin_b = self.sb_margin_bottom.value()
         margin_l = self.sb_margin_left.value()
@@ -2267,52 +2681,189 @@ class PhotoPrintApp(QMainWindow):
         
         gap = self.sb_gap.value()
         
+        if getattr(self, 'chk_enable_grid', None) and self.chk_enable_grid.isChecked():
+            cols = self.sb_grid_cols.value()
+            rows = self.sb_grid_rows.value()
+            is_orig = self.rb_grid_original_size.isChecked()
+            
+            if is_orig and hasattr(self, 'loaded_images') and self.loaded_images:
+                avail_w = paper_w - (margin_l + margin_r) - (cols - 1) * gap
+                avail_h = paper_h - (margin_t + margin_b) - (rows - 1) * gap
+                
+                cell_w = avail_w / cols if cols > 0 else 10.0
+                cell_h = avail_h / rows if rows > 0 else 10.0
+
+                if len(self.loaded_images) == 1:
+                    active_configs.append({'w': cell_w, 'h': cell_h, 'qty': cols * rows, 'label': "Original"})
+                    is_fill_single_page = True
+                else:
+                    active_configs.append({'w': cell_w, 'h': cell_h, 'qty': max(cols * rows, len(self.loaded_images)), 'label': "Original"})
+            else:
+                avail_w = paper_w - (margin_l + margin_r) - (cols - 1) * gap
+                avail_h = paper_h - (margin_t + margin_b) - (rows - 1) * gap
+                
+                photo_w = avail_w / cols if cols > 0 else 10.0
+                photo_h = avail_h / rows if rows > 0 else 10.0
+                val_w, val_h = photo_w, photo_h
+                
+                qty = cols * rows
+                active_configs.append({
+                    'w': photo_w, 'h': photo_h, 
+                    'qty': qty, 
+                    'label': f"Grid {cols}x{rows}"
+                })
+                total_print_qty += qty
+        else:
+            for g in self.size_groups:
+                if g['chk'].isChecked() and g['qty'].value() > 0:
+                    vw, vh = g['w'].value(), g['h'].value()
+                    # បំប្លែងខ្នាតទៅ mm
+                    if unit == "cm": pw, ph = vw * 10, vh * 10
+                    elif unit == "mm": pw, ph = vw, vh
+                    elif unit == "inch": pw, ph = vw * 25.4, vh * 25.4
+                    elif unit == "pixel": pw, ph = vw * (25.4 / current_dpi), vh * (25.4 / current_dpi)
+                    
+                    active_configs.append({
+                        'w': pw, 'h': ph, 
+                        'qty': g['qty'].value(), 
+                        'label': f"{vw:g}x{vh:g} {unit}"
+                    })
+                    total_print_qty += g['qty'].value()
+                    if len(active_configs) == 1:
+                        photo_w, photo_h, val_w, val_h = pw, ph, vw, vh
+        
         avail_w = paper_w - (margin_l + margin_r)
         avail_h = paper_h - (margin_t + margin_b)
         
-        # សម្រាប់របៀបរៀបចំថ្មី យើងប្រើការគណនាប្លង់ឆ្លាតវៃ (Smart Packing)
-        # យើងនឹងព្យាយាមរកចំនួនអតិបរមា ប្រសិនបើអ្នកប្រើរើសយក "Max Printable"
-        if self.rb_max_qty.isChecked() and len(active_configs) == 1:
-            active_configs[0]['qty'] = 1000 # ដាក់ចំនួនធំដើម្បីឲ្យកូដរៀបចំទាល់តែពេញ
-
-        offset_x, offset_y = margin_l, margin_t
-
-        self.preview_canvas.paper_w = paper_w
-        self.preview_canvas.paper_h = paper_h
-        self.preview_canvas.photo_w = photo_w
-        self.preview_canvas.photo_h = photo_h
-        self.preview_canvas.size_label = f"{val_w:g}x{val_h:g} {unit}"
-        
-        self.preview_canvas.margin_top = margin_t
-        self.preview_canvas.margin_bottom = margin_b
-        self.preview_canvas.margin_left = margin_l
-        self.preview_canvas.margin_right = margin_r
-        self.preview_canvas.offset_x = offset_x
-        self.preview_canvas.offset_y = offset_y
-        self.preview_canvas.gap = gap
-        self.preview_canvas.optimize_fit = self.chk_optimize_fit.isChecked()
-        
-        # ឥឡូវនេះ មុខងារ Manual Layout ប្រើប្រាស់ប្រព័ន្ធរៀបចំប្លង់ស្វ័យប្រវត្តិ (Optimize Fit) ជាមូលដ្ឋាន
-        self.preview_canvas.generate_grid(active_configs)
+        # Prepare items_to_place
+        items_to_place = []
+        is_fill_single_page = False
         
         if self.rb_max_qty.isChecked() and len(active_configs) == 1:
-            total_print_qty = len(self.preview_canvas.photo_positions)
-            active_configs[0]['qty'] = total_print_qty
+            if hasattr(self, 'loaded_images') and self.loaded_images:
+                if len(self.loaded_images) == 1:
+                    active_configs[0]['qty'] = 1000
+                    is_fill_single_page = True
+                else:
+                    active_configs[0]['qty'] = len(self.loaded_images)
+            else:
+                active_configs[0]['qty'] = 1000
+                is_fill_single_page = True
+
+        for config in active_configs:
+            for _ in range(config['qty']):
+                items_to_place.append(config)
+
+        # Remove existing canvases
+        while self.stacked_widget.count() > 0:
+            widget = self.stacked_widget.widget(0)
+            self.stacked_widget.removeWidget(widget)
+            widget.deleteLater()
+        self.preview_canvases.clear()
+        
+        remaining_items = items_to_place
+        page_index = 0
+        total_placed_qty = 0
+        
+        while (remaining_items or page_index == 0):
+            canvas = PreviewWidget()
+            canvas.selectionChanged.connect(self.update_image_adjustment_buttons)
             
-        self.preview_canvas.print_qty = total_print_qty
+            if getattr(self, 'chk_enable_grid', None) and self.chk_enable_grid.isChecked():
+                canvas.grid_cols = self.sb_grid_cols.value()
+                canvas.grid_rows = self.sb_grid_rows.value()
+            else:
+                canvas.grid_cols = 0
+                canvas.grid_rows = 0
+            
+            canvas.paper_w = paper_w
+            canvas.paper_h = paper_h
+            canvas.photo_w = photo_w
+            canvas.photo_h = photo_h
+            canvas.size_label = f"{val_w:g}x{val_h:g} {unit}"
+            
+            canvas.margin_top = margin_t
+            canvas.margin_bottom = margin_b
+            canvas.margin_left = margin_l
+            canvas.margin_right = margin_r
+            canvas.offset_x = margin_l
+            canvas.offset_y = margin_t
+            canvas.gap = gap
+            canvas.optimize_fit = self.chk_optimize_fit.isChecked()
+            
+            canvas.is_manual = self.rb_manual_layout.isChecked()
+            
+            mode = 'fill'
+            if getattr(self, 'chk_enable_grid', None) and self.chk_enable_grid.isChecked() and getattr(self, 'rb_grid_original_size', None) and self.rb_grid_original_size.isChecked():
+                mode = 'contain'
+            else:
+                if self.rb_img_cover.isChecked(): mode = 'cover'
+                elif self.rb_img_contain.isChecked(): mode = 'contain'
+            canvas.image_mode = mode
+            
+            canvas.show_border = self.chk_show_border.isChecked()
+            
+            if page_index == 0:
+                remaining_items.sort(key=lambda x: max(x['w'], x['h']), reverse=True)
+                
+            remaining_items = canvas.generate_grid(remaining_items)
+            
+            total_placed_qty += len(canvas.photo_positions)
+            
+            if self.chk_center_h.isChecked():
+                canvas.center_horizontally()
+            if self.chk_center_v.isChecked():
+                canvas.center_vertically()
+                
+            container = QWidget()
+            container_layout = QVBoxLayout(container)
+            container_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+            container_layout.addWidget(canvas)
+            
+            self.stacked_widget.addWidget(container)
+            self.preview_canvases.append(canvas)
+            page_index += 1
+            
+            if is_fill_single_page:
+                break
+            if self.rb_manual_layout.isChecked():
+                break
+
+        # Assign images to slots
+        if hasattr(self, 'loaded_images') and self.loaded_images:
+            if len(self.loaded_images) == 1:
+                pix = QPixmap(self.loaded_images[0])
+                for canvas in self.preview_canvases:
+                    for p in canvas.photo_positions:
+                        p['image_pixmap'] = pix if not pix.isNull() else None
+            else:
+                img_idx = 0
+                for canvas in self.preview_canvases:
+                    for p in canvas.photo_positions:
+                        if img_idx < len(self.loaded_images):
+                            pix = QPixmap(self.loaded_images[img_idx])
+                            p['image_pixmap'] = pix if not pix.isNull() else None
+                            img_idx += 1
+                        else:
+                            p['image_pixmap'] = None
+
+        if self.rb_max_qty.isChecked() and len(active_configs) == 1:
+            if is_fill_single_page:
+                total_print_qty = total_placed_qty
+            else:
+                total_print_qty = len(self.loaded_images) if hasattr(self, 'loaded_images') and self.loaded_images else total_placed_qty
+        else:
+            total_print_qty = total_placed_qty
         
         ori_text = "បញ្ឈរ (Portrait)" if self.rb_port.isChecked() else "ផ្តេក (Landscape)"
-        self.lbl_status.setText(f"<b>ចំនួនសរុប: {total_print_qty} រូបភាព ({ori_text})</b>")
+        self.lbl_status.setText(f"<b>ចំនួនសរុប: {total_print_qty} រូបភាព ({ori_text}) [ទំព័រ: {len(self.preview_canvases)}]</b>")
         
-        # អនុវត្តការតម្រឹមស្វ័យប្រវត្តិពីចំណុចទី៥ (Auto Center)
-        if self.chk_center_h.isChecked():
-            self.preview_canvas.center_horizontally()
-        if self.chk_center_v.isChecked():
-            self.preview_canvas.center_vertically()
-            
         self.update_image_adjustment_buttons()
-                
-        self.preview_canvas.update()
+        
+        self.current_page_index = 0
+        if self.stacked_widget.count() > 0:
+            self.stacked_widget.setCurrentIndex(0)
+        self.update_pagination_ui()
 
     def open_settings(self):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout
@@ -2431,79 +2982,83 @@ class PhotoPrintApp(QMainWindow):
         
         scale = dpi / 25.4
         
-        painter.fillRect(0, 0, int(paper_w * scale), int(paper_h * scale), Qt.white)
-        
-        for pos in self.preview_canvas.photo_positions:
-            p_w, p_h = pos.get('w', self.preview_canvas.photo_w), pos.get('h', self.preview_canvas.photo_h)
-            cell_w = p_w * scale
-            cell_h = p_h * scale
-            tw, th = max(1, int(cell_w + 1)), max(1, int(cell_h + 1))
-            
-            cx = pos['x'] * scale
-            cy = pos['y'] * scale
-            
-            current_pixmap = pos.get('image_pixmap')
-            target_rect = QRectF(cx, cy, cell_w, cell_h).toRect()
-            
-            if target_rect.width() <= 0 or target_rect.height() <= 0:
-                continue
+        for i, canvas in enumerate(self.preview_canvases):
+            if i > 0:
+                pdf_writer.newPage()
                 
-            if current_pixmap and not current_pixmap.isNull():
-                manual_angle = pos.get('rotation_angle', 0)
-                if manual_angle != 0:
-                    transform = QTransform().rotate(manual_angle)
-                    current_pixmap = current_pixmap.transformed(transform, Qt.SmoothTransformation)
+            painter.fillRect(0, 0, int(paper_w * scale), int(paper_h * scale), Qt.white)
+            
+            for pos in canvas.photo_positions:
+                p_w, p_h = pos.get('w', canvas.photo_w), pos.get('h', canvas.photo_h)
+                cell_w = p_w * scale
+                cell_h = p_h * scale
+                tw, th = max(1, int(cell_w + 1)), max(1, int(cell_h + 1))
+                
+                cx = pos['x'] * scale
+                cy = pos['y'] * scale
+                
+                current_pixmap = pos.get('image_pixmap')
+                target_rect = QRectF(cx, cy, cell_w, cell_h).toRect()
+                
+                if target_rect.width() <= 0 or target_rect.height() <= 0:
+                    continue
                     
-                if self.preview_canvas.optimize_fit and manual_angle == 0:
-                    img_w, img_h = current_pixmap.width(), current_pixmap.height()
-                    if img_w != img_h and cell_w != cell_h:
-                        if (img_w > img_h) != (cell_w > cell_h):
-                            transform = QTransform().rotate(90)
-                            current_pixmap = current_pixmap.transformed(transform, Qt.SmoothTransformation)
-
-                if self.preview_canvas.image_mode == 'fill':
-                    painter.drawPixmap(target_rect, current_pixmap)
-                elif self.preview_canvas.image_mode == 'contain':
-                    pre_scaled_contain = current_pixmap.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    if pre_scaled_contain and not pre_scaled_contain.isNull():
-                        x_offset = (target_rect.width() - pre_scaled_contain.width()) // 2
-                        y_offset = (target_rect.height() - pre_scaled_contain.height()) // 2
-                        painter.drawPixmap(target_rect.x() + x_offset, target_rect.y() + y_offset, pre_scaled_contain)
-                elif self.preview_canvas.image_mode == 'cover':
-                    pre_scaled_cover = current_pixmap.scaled(tw, th, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-                    if pre_scaled_cover and not pre_scaled_cover.isNull():
-                        img_scale = pos.get('scale', 1.0)
-                        pan_x = pos.get('pan_x', 0.0)
-                        pan_y = pos.get('pan_y', 0.0)
+                if current_pixmap and not current_pixmap.isNull():
+                    manual_angle = pos.get('rotation_angle', 0)
+                    if manual_angle != 0:
+                        transform = QTransform().rotate(manual_angle)
+                        current_pixmap = current_pixmap.transformed(transform, Qt.SmoothTransformation)
                         
-                        screen_scale = self.preview_canvas.paper_width_px / self.preview_canvas.paper_w if self.preview_canvas.paper_w > 0 else 1
-                        pdf_pan_x = pan_x * (scale / screen_scale) if screen_scale else 0
-                        pdf_pan_y = pan_y * (scale / screen_scale) if screen_scale else 0
+                    if canvas.optimize_fit and manual_angle == 0:
+                        img_w, img_h = current_pixmap.width(), current_pixmap.height()
+                        if img_w != img_h and cell_w != cell_h:
+                            if (img_w > img_h) != (cell_w > cell_h):
+                                transform = QTransform().rotate(90)
+                                current_pixmap = current_pixmap.transformed(transform, Qt.SmoothTransformation)
 
-                        if img_scale > 1.0:
-                            new_w = int(pre_scaled_cover.width() * img_scale)
-                            new_h = int(pre_scaled_cover.height() * img_scale)
-                            if new_w < 8000 and new_h < 8000:
-                                current_cover = pre_scaled_cover.scaled(new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    if canvas.image_mode == 'fill':
+                        painter.drawPixmap(target_rect, current_pixmap)
+                    elif canvas.image_mode == 'contain':
+                        pre_scaled_contain = current_pixmap.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        if pre_scaled_contain and not pre_scaled_contain.isNull():
+                            x_offset = (target_rect.width() - pre_scaled_contain.width()) // 2
+                            y_offset = (target_rect.height() - pre_scaled_contain.height()) // 2
+                            painter.drawPixmap(target_rect.x() + x_offset, target_rect.y() + y_offset, pre_scaled_contain)
+                    elif canvas.image_mode == 'cover':
+                        pre_scaled_cover = current_pixmap.scaled(tw, th, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                        if pre_scaled_cover and not pre_scaled_cover.isNull():
+                            img_scale = pos.get('scale', 1.0)
+                            pan_x = pos.get('pan_x', 0.0)
+                            pan_y = pos.get('pan_y', 0.0)
+                            
+                            screen_scale = canvas.paper_width_px / canvas.paper_w if canvas.paper_w > 0 else 1
+                            pdf_pan_x = pan_x * (scale / screen_scale) if screen_scale else 0
+                            pdf_pan_y = pan_y * (scale / screen_scale) if screen_scale else 0
+
+                            if img_scale > 1.0:
+                                new_w = int(pre_scaled_cover.width() * img_scale)
+                                new_h = int(pre_scaled_cover.height() * img_scale)
+                                if new_w < 8000 and new_h < 8000:
+                                    current_cover = pre_scaled_cover.scaled(new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                else:
+                                    current_cover = pre_scaled_cover
                             else:
                                 current_cover = pre_scaled_cover
-                        else:
-                            current_cover = pre_scaled_cover
+                                
+                            base_crop_x = (current_cover.width() - target_rect.width()) / 2.0
+                            base_crop_y = (current_cover.height() - target_rect.height()) / 2.0
                             
-                        base_crop_x = (current_cover.width() - target_rect.width()) / 2.0
-                        base_crop_y = (current_cover.height() - target_rect.height()) / 2.0
-                        
-                        crop_x = int(max(0, min(base_crop_x - pdf_pan_x, current_cover.width() - target_rect.width())))
-                        crop_y = int(max(0, min(base_crop_y - pdf_pan_y, current_cover.height() - target_rect.height())))
-                        
-                        cropped_pixmap = current_cover.copy(crop_x, crop_y, target_rect.width(), target_rect.height())
-                        if not cropped_pixmap.isNull():
-                            painter.drawPixmap(target_rect, cropped_pixmap)
+                            crop_x = int(max(0, min(base_crop_x - pdf_pan_x, current_cover.width() - target_rect.width())))
+                            crop_y = int(max(0, min(base_crop_y - pdf_pan_y, current_cover.height() - target_rect.height())))
+                            
+                            cropped_pixmap = current_cover.copy(crop_x, crop_y, target_rect.width(), target_rect.height())
+                            if not cropped_pixmap.isNull():
+                                painter.drawPixmap(target_rect, cropped_pixmap)
 
-                if getattr(self.preview_canvas, 'show_border', False):
-                    from PyQt5.QtGui import QPen, QColor
-                    painter.setPen(QPen(QColor(0, 0, 0), 2, Qt.SolidLine))
-                    painter.drawRect(target_rect)
+                    if getattr(canvas, 'show_border', False):
+                        from PyQt5.QtGui import QPen, QColor
+                        painter.setPen(QPen(QColor(0, 0, 0), 2, Qt.SolidLine))
+                        painter.drawRect(target_rect)
             
         painter.end()
         if show_msg:
@@ -2533,7 +3088,7 @@ if __name__ == '__main__':
             base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         return os.path.join(base_path, relative_path)
         
-    icon_path = get_resource_path('Assets/Icon.ico')
+    icon_path = get_resource_path('Assets/icon.png')
     app_icon = QIcon(icon_path)
     app.setWindowIcon(app_icon)
     
