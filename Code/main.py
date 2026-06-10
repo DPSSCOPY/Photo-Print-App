@@ -34,6 +34,7 @@ class PreviewWidget(QWidget):
         self.offset_y = 10
         self.gap = 2
         self.show_border = False
+        self.border_weight = 0.50
         self.print_qty = 0
         
         self.is_manual = False
@@ -466,7 +467,9 @@ class PreviewWidget(QWidget):
                         painter.drawPixmap(target_rect, cropped_pixmap)
 
                 if getattr(self, 'show_border', False):
-                    painter.setPen(QPen(QColor(0, 0, 0), 0.25, Qt.SolidLine))
+                    border_pt = getattr(self, 'border_weight', 0.50)
+                    border_px = border_pt * (25.4 / 72.0) * scale
+                    painter.setPen(QPen(QColor(0, 0, 0), max(0.0, border_px), Qt.SolidLine))
                     painter.drawRect(int(cx), int(cy), int(cell_w), int(cell_h))
                     painter.setPen(pen) # ត្រឡប់មក Pen ធម្មតាវិញ
             else:
@@ -1282,10 +1285,22 @@ class PhotoPrintApp(QMainWindow):
         # 1. ជ្រើសរើសរូបភាព
         gb_photo = QGroupBox("១. ជ្រើសរើសរូបភាព / Choose Photo")
         gb_photo_layout = QVBoxLayout()
+        h_btn_layout = QHBoxLayout()
+        
         self.btn_load = QPushButton("បញ្ចូលរូបភាព / Load Image")
         self.btn_load.setStyleSheet("background-color: #0084c7; color: white; padding: 10px; border-radius: 5px;")
         self.btn_load.clicked.connect(self.load_image)
-        gb_photo_layout.addWidget(self.btn_load)
+        h_btn_layout.addWidget(self.btn_load)
+        
+        self.btn_clear = QPushButton("✖")
+        self.btn_clear.setToolTip("លុបរូបភាព / Clear Image")
+        self.btn_clear.setFixedSize(38, 38)
+        self.btn_clear.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 5px; font-weight: bold; font-size: 16px;")
+        self.btn_clear.clicked.connect(self.clear_image)
+        self.btn_clear.setVisible(False)
+        h_btn_layout.addWidget(self.btn_clear)
+        
+        gb_photo_layout.addLayout(h_btn_layout)
         self.lbl_image_status = QLabel("<i>មិនទាន់មានរូបភាព / No image loaded</i>")
         gb_photo_layout.addWidget(self.lbl_image_status)
         gb_photo.setLayout(gb_photo_layout)
@@ -1528,9 +1543,27 @@ class PhotoPrintApp(QMainWindow):
         h_center_layout.addWidget(self.chk_center_v)
         gb_margin_layout.addLayout(h_center_layout)
         
-        self.chk_show_border = QCheckBox("បង្ហាញបន្ទាត់សម្រាប់កាត់ / Show Border Line")
+        self.chk_show_border = QCheckBox("បន្ទាត់ស៊ុម / Image Outline")
         self.chk_show_border.stateChanged.connect(self.toggle_border)
         gb_margin_layout.addWidget(self.chk_show_border)
+        
+        h_border_weight_layout = QHBoxLayout()
+        h_border_weight_layout.addWidget(QLabel("កម្រាស់ / Weight (pt):"))
+        self.sl_border_weight = QSlider(Qt.Horizontal)
+        self.sl_border_weight.setRange(0, 100) # 0 to 10.0 pt
+        self.sl_border_weight.setValue(5) # 0.5 pt
+        self.sb_border_weight = QDoubleSpinBox()
+        self.sb_border_weight.setDecimals(2)
+        self.sb_border_weight.setRange(0.00, 10.00)
+        self.sb_border_weight.setValue(0.50)
+        self.sb_border_weight.setSingleStep(0.10)
+        
+        self.sl_border_weight.valueChanged.connect(self.on_border_slider_changed)
+        self.sb_border_weight.valueChanged.connect(self.on_border_spinbox_changed)
+        
+        h_border_weight_layout.addWidget(self.sl_border_weight)
+        h_border_weight_layout.addWidget(self.sb_border_weight)
+        gb_margin_layout.addLayout(h_border_weight_layout)
         gb_margin.setLayout(gb_margin_layout)
         right_layout.addWidget(gb_margin)
 
@@ -2527,6 +2560,7 @@ class PhotoPrintApp(QMainWindow):
             return
 
         self.loaded_images = file_names
+        self.btn_clear.setVisible(True)
         
         if len(file_names) == 1:
             self.default_image_pixmap = QPixmap(file_names[0])
@@ -2535,6 +2569,13 @@ class PhotoPrintApp(QMainWindow):
             self.default_image_pixmap = None
             self.lbl_image_status.setText(f"<i>បានជ្រើសរើសរូបភាពចំនួន {len(file_names)} ឯកសារ</i>")
             
+        self.calculate_layout()
+
+    def clear_image(self):
+        self.loaded_images = []
+        self.default_image_pixmap = None
+        self.lbl_image_status.setText("<i>មិនទាន់មានរូបភាព / No image loaded</i>")
+        self.btn_clear.setVisible(False)
         self.calculate_layout()
             
     def toggle_auto_center(self):
@@ -2551,6 +2592,24 @@ class PhotoPrintApp(QMainWindow):
     def toggle_border(self):
         for canvas in self.preview_canvases:
             canvas.show_border = self.chk_show_border.isChecked()
+            canvas.update()
+            
+    def on_border_slider_changed(self, value):
+        self.sb_border_weight.blockSignals(True)
+        self.sb_border_weight.setValue(value / 10.0)
+        self.sb_border_weight.blockSignals(False)
+        self.change_border_weight()
+
+    def on_border_spinbox_changed(self, value):
+        self.sl_border_weight.blockSignals(True)
+        self.sl_border_weight.setValue(int(value * 10))
+        self.sl_border_weight.blockSignals(False)
+        self.change_border_weight()
+
+    def change_border_weight(self):
+        weight = self.sb_border_weight.value()
+        for canvas in self.preview_canvases:
+            canvas.border_weight = weight
             canvas.update()
         
     def toggle_manual_mode(self):
@@ -3057,7 +3116,9 @@ class PhotoPrintApp(QMainWindow):
 
                     if getattr(canvas, 'show_border', False):
                         from PyQt5.QtGui import QPen, QColor
-                        painter.setPen(QPen(QColor(0, 0, 0), 2, Qt.SolidLine))
+                        border_pt = getattr(canvas, 'border_weight', 0.50)
+                        border_px = border_pt * (25.4 / 72.0) * scale
+                        painter.setPen(QPen(QColor(0, 0, 0), max(0.0, border_px), Qt.SolidLine))
                         painter.drawRect(target_rect)
             
         painter.end()
