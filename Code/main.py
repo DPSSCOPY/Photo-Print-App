@@ -29,6 +29,42 @@ class CornerHandle(QGraphicsEllipseItem):
             self.dialog.update_polygon()
         return super().itemChange(change, value)
 
+class MovablePolygonItem(QGraphicsPolygonItem):
+    def __init__(self, dialog, parent=None):
+        super().__init__(parent)
+        self.dialog = dialog
+        from PyQt5.QtCore import Qt
+        self.setCursor(Qt.OpenHandCursor)
+        self.last_pos = None
+
+    def mousePressEvent(self, event):
+        from PyQt5.QtCore import Qt
+        if event.button() == Qt.LeftButton:
+            self.setCursor(Qt.ClosedHandCursor)
+            self.last_pos = event.scenePos()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.last_pos is not None:
+            delta = event.scenePos() - self.last_pos
+            for handle in self.dialog.handles:
+                handle.setPos(handle.pos() + delta)
+            self.last_pos = event.scenePos()
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        from PyQt5.QtCore import Qt
+        if event.button() == Qt.LeftButton:
+            self.setCursor(Qt.OpenHandCursor)
+            self.last_pos = None
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
 class PerspectiveCropDialog(QDialog):
     def __init__(self, image_path, parent=None):
         super().__init__(parent)
@@ -38,7 +74,7 @@ class PerspectiveCropDialog(QDialog):
         
         self.layout = QVBoxLayout(self)
         
-        lbl_info = QLabel("<b>របៀបប្រើ៖</b> សូមទាញចំណុចពណ៌ខៀវទាំង ៤ ឱ្យចំជ្រុងរបស់កាត រួចចុច 'យល់ព្រម (Crop)'")
+        lbl_info = QLabel("<b>របៀបប្រើ៖</b> សូមទាញចំណុចពណ៌ខៀវ ដើម្បីកែជ្រុង ឬទាញផ្ទៃកណ្តាល ដើម្បីរំកិលទីតាំងទាំងមូល")
         lbl_info.setStyleSheet("color: #333; padding: 5px; background: #e0f2fe; border-radius: 4px;")
         self.layout.addWidget(lbl_info)
         
@@ -53,15 +89,14 @@ class PerspectiveCropDialog(QDialog):
         
         self.points = self.detect_corners()
         
-        from PyQt5.QtWidgets import QGraphicsPolygonItem
         from PyQt5.QtGui import QPolygonF, QBrush, QColor, QPen
         from PyQt5.QtCore import Qt
-        self.polygon_item = QGraphicsPolygonItem()
+        self.handles = []
+        
+        self.polygon_item = MovablePolygonItem(self)
         self.polygon_item.setPen(QPen(QColor(0, 120, 215), 2, Qt.DashLine))
         self.polygon_item.setBrush(QBrush(QColor(0, 120, 215, 50)))
         self.scene.addItem(self.polygon_item)
-        
-        self.handles = []
         radius = max(10, min(self.qpixmap.width(), self.qpixmap.height()) * 0.02)
         for i, pt in enumerate(self.points):
             handle = CornerHandle(pt[0], pt[1], radius, i)
@@ -106,7 +141,7 @@ class PerspectiveCropDialog(QDialog):
             
         orig_h, orig_w = img.shape[:2]
         ratio = orig_h / 800.0
-        if ratio > 1:
+        if ratio > 0:
             dim = (int(orig_w / ratio), 800)
             resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
         else:
@@ -114,19 +149,79 @@ class PerspectiveCropDialog(QDialog):
             ratio = 1.0
 
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        edged = cv2.Canny(gray, 75, 200)
-
-        contours, _ = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
-
-        screenCnt = None
-        for c in contours:
-            peri = cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-            if len(approx) == 4:
-                screenCnt = approx
-                break
+        
+        # 1. Bilateral Filter to smooth while keeping edges
+        gray = cv2.bilateralFilter(gray, 9, 75, 75)
+        
+        best_contour = None
+        max_area = 0
+        best_screenCnt = None
+        
+        # Define multiple thresholding and edge detection strategies
+        # 1. Auto Canny based on median
+        v = np.median(gray)
+        canny = cv2.Canny(gray, int(max(0, (1.0 - 0.33) * v)), int(min(255, (1.0 + 0.33) * v)))
+        
+        # 2. Normal Otsu
+        _, thresh_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        
+        # 3. Inverted Otsu
+        _, thresh_otsu_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+        
+        # 4. Adaptive Thresholding (Excellent for shadows/gradients)
+        thresh_adapt = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        
+        # 5. Morphological Gradient
+        kernel_grad = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        gradient = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel_grad)
+        _, thresh_grad = cv2.threshold(gradient, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        
+        methods = [canny, thresh_otsu, thresh_otsu_inv, thresh_adapt, thresh_grad]
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        
+        min_area_thresh = (resized.shape[0] * resized.shape[1]) * 0.1
+        
+        largest_area = 0
+        largest_c = None
+        
+        for edged in methods:
+            # Connect broken edges
+            edged = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
+            contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for c in contours:
+                area = cv2.contourArea(c)
+                
+                # Track the absolute largest area found, regardless of shape
+                if area > largest_area:
+                    largest_area = area
+                    largest_c = c
+                    
+                if area < min_area_thresh:
+                    continue
+                    
+                peri = cv2.arcLength(c, True)
+                for eps in [0.02, 0.03, 0.04, 0.05, 0.06]:
+                    approx = cv2.approxPolyDP(c, eps * peri, True)
+                    if len(approx) == 4 and area > max_area:
+                        max_area = area
+                        best_screenCnt = approx
+                        best_contour = c
+                        break
+        
+        # If the best 4-point polygon is much smaller than the absolute largest contour, 
+        # it means we likely found an inner box (like a photo) and missed the true card border.
+        if best_screenCnt is not None and max_area < largest_area * 0.7:
+            best_screenCnt = None
+            
+        screenCnt = best_screenCnt
+        
+        # Fallback to minAreaRect of the absolute largest contour across ALL methods
+        if screenCnt is None:
+            if largest_c is not None and largest_area > min_area_thresh:
+                rect = cv2.minAreaRect(largest_c)
+                box = cv2.boxPoints(rect)
+                screenCnt = np.int32(box)
 
         if screenCnt is None:
             return self.default_corners()
@@ -519,6 +614,42 @@ class PreviewWidget(QWidget):
             p['y'] += shift_y
         self.update()
 
+    def align_top(self):
+        selected = [p for p in self.photo_positions if p.get('selected')]
+        if not selected: selected = self.photo_positions
+        if not selected: return
+        min_y = min(p['y'] for p in selected)
+        shift_y = self.margin_top - min_y
+        for p in selected: p['y'] += shift_y
+        self.update()
+
+    def align_bottom(self):
+        selected = [p for p in self.photo_positions if p.get('selected')]
+        if not selected: selected = self.photo_positions
+        if not selected: return
+        max_bottom = max(p['y'] + p['h'] for p in selected)
+        shift_y = (self.paper_h - self.margin_bottom) - max_bottom
+        for p in selected: p['y'] += shift_y
+        self.update()
+
+    def align_left(self):
+        selected = [p for p in self.photo_positions if p.get('selected')]
+        if not selected: selected = self.photo_positions
+        if not selected: return
+        min_x = min(p['x'] for p in selected)
+        shift_x = self.margin_left - min_x
+        for p in selected: p['x'] += shift_x
+        self.update()
+
+    def align_right(self):
+        selected = [p for p in self.photo_positions if p.get('selected')]
+        if not selected: selected = self.photo_positions
+        if not selected: return
+        max_right = max(p['x'] + p['w'] for p in selected)
+        shift_x = (self.paper_w - self.margin_right) - max_right
+        for p in selected: p['x'] += shift_x
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -617,6 +748,14 @@ class PreviewWidget(QWidget):
                 continue
                 
             if current_pixmap and not current_pixmap.isNull():
+                painter.save()
+                if getattr(self, 'apply_rounded_corners', False) and getattr(self, 'is_manual', False):
+                    from PyQt5.QtGui import QPainterPath
+                    path = QPainterPath()
+                    radius_px = 3.18 * scale
+                    path.addRoundedRect(QRectF(target_rect), radius_px, radius_px)
+                    painter.setClipPath(path)
+                    
                 painter.fillRect(target_rect, Qt.white) # ចាក់ផ្ទៃសពីក្រោយ ដើម្បីឲ្យ contain ស្អាតល្អ
                 
                 if self.image_mode == 'fill': # Stretch to fill
@@ -649,6 +788,8 @@ class PreviewWidget(QWidget):
                     cropped_pixmap = current_cover.copy(crop_x, crop_y, target_rect.width(), target_rect.height())
                     if not cropped_pixmap.isNull():
                         painter.drawPixmap(target_rect, cropped_pixmap)
+
+                painter.restore()
 
                 if getattr(self, 'show_border', False):
                     border_pt = getattr(self, 'border_weight', 0.50)
@@ -3336,9 +3477,15 @@ class PhotoPrintApp(QMainWindow):
         self.btn_load_front.setStyleSheet("background-color: #0084c7; color: white; padding: 10px; border-radius: 5px;")
         self.btn_load_front.clicked.connect(self.load_id_front)
         
+        self.lbl_info_front = QLabel("")
+        self.lbl_info_front.setStyleSheet("color: gray; font-size: 11px;")
+        
         self.btn_load_back = QPushButton("បញ្ចូលរូបកាតក្រោយ / Load Back")
         self.btn_load_back.setStyleSheet("background-color: #0084c7; color: white; padding: 10px; border-radius: 5px;")
         self.btn_load_back.clicked.connect(self.load_id_back)
+        
+        self.lbl_info_back = QLabel("")
+        self.lbl_info_back.setStyleSheet("color: gray; font-size: 11px;")
         
         self.btn_clear_id = QPushButton("លុបរូបកាត / Clear ID Cards")
         self.btn_clear_id.setStyleSheet("background-color: #e74c3c; color: white; padding: 10px; border-radius: 5px;")
@@ -3348,19 +3495,23 @@ class PhotoPrintApp(QMainWindow):
         self.cb_id_filter.addItems(["រូបដើម / Original", "ពណ៌វេទមន្ត / Magic Color", "ពណ៌ប្រផេះ / Grayscale", "ស-ខ្មៅ / B&W Scan"])
         self.cb_id_filter.currentIndexChanged.connect(self.apply_id_filters)
         
-        self.chk_id_sharpen = QCheckBox("ធ្វើឱ្យរូបច្បាស់ (Auto Sharpen)")
-        self.chk_id_sharpen.stateChanged.connect(self.apply_id_filters)
-        
         self.chk_id_ai = QCheckBox("ប្រើប្រាស់ AI បង្កើនភាពច្បាស់ (AI Enhance)")
         self.chk_id_ai.setStyleSheet("color: #d946ef; font-weight: bold;")
         self.chk_id_ai.stateChanged.connect(self.apply_id_filters)
         
+        self.chk_id_rounded = QCheckBox("✂️ កាត់ស៊ុមគែមកោងកាត (Rounded Corners)")
+        self.chk_id_rounded.setChecked(True)
+        self.chk_id_rounded.setStyleSheet("color: #0ea5e9; font-weight: bold;")
+        self.chk_id_rounded.stateChanged.connect(self.update_id_preview)
+        
         gb_id_layout.addWidget(self.btn_load_front)
+        gb_id_layout.addWidget(self.lbl_info_front)
         gb_id_layout.addWidget(self.btn_load_back)
+        gb_id_layout.addWidget(self.lbl_info_back)
         gb_id_layout.addWidget(QLabel("ប្រភេទពណ៌ / Color Filter:"))
         gb_id_layout.addWidget(self.cb_id_filter)
-        gb_id_layout.addWidget(self.chk_id_sharpen)
         gb_id_layout.addWidget(self.chk_id_ai)
+        gb_id_layout.addWidget(self.chk_id_rounded)
         gb_id_layout.addWidget(self.btn_clear_id)
         gb_id.setLayout(gb_id_layout)
         left_layout.addWidget(gb_id)
@@ -3374,7 +3525,61 @@ class PhotoPrintApp(QMainWindow):
         gb_paper.setLayout(gb_paper_layout)
         left_layout.addWidget(gb_paper)
         
-        gb_qty = QGroupBox("៣. ចំនួនបោះពុម្ព / Print Quantity")
+        gb_size = QGroupBox("៣. ទំហំកាត / Card Size (mm)")
+        gb_size_layout = QHBoxLayout()
+        self.sb_id_w = QDoubleSpinBox()
+        self.sb_id_w.setRange(10, 300)
+        self.sb_id_w.setValue(85.6)
+        self.sb_id_w.setSuffix(" mm")
+        
+        self.sb_id_h = QDoubleSpinBox()
+        self.sb_id_h.setRange(10, 300)
+        self.sb_id_h.setValue(54.0)
+        self.sb_id_h.setSuffix(" mm")
+
+        self.btn_id_ratio_lock = QPushButton("🔒")
+        self.btn_id_ratio_lock.setCheckable(True)
+        self.btn_id_ratio_lock.setChecked(True)
+        self.btn_id_ratio_lock.setFixedWidth(30)
+        self.btn_id_ratio_lock.setToolTip("ចាក់សោរទំហំ (Lock Aspect Ratio)")
+        
+        self.id_ratio = 85.6 / 54.0
+        
+        def toggle_ratio(checked):
+            if checked:
+                self.btn_id_ratio_lock.setText("🔒")
+                if self.sb_id_h.value() > 0:
+                    self.id_ratio = self.sb_id_w.value() / self.sb_id_h.value()
+            else:
+                self.btn_id_ratio_lock.setText("🔓")
+                
+        def w_changed(val):
+            if self.btn_id_ratio_lock.isChecked():
+                self.sb_id_h.blockSignals(True)
+                self.sb_id_h.setValue(val / self.id_ratio)
+                self.sb_id_h.blockSignals(False)
+            self.update_id_preview()
+            
+        def h_changed(val):
+            if self.btn_id_ratio_lock.isChecked():
+                self.sb_id_w.blockSignals(True)
+                self.sb_id_w.setValue(val * self.id_ratio)
+                self.sb_id_w.blockSignals(False)
+            self.update_id_preview()
+            
+        self.btn_id_ratio_lock.toggled.connect(toggle_ratio)
+        self.sb_id_w.valueChanged.connect(w_changed)
+        self.sb_id_h.valueChanged.connect(h_changed)
+        
+        gb_size_layout.addWidget(QLabel("ទទឹង (W):"))
+        gb_size_layout.addWidget(self.sb_id_w)
+        gb_size_layout.addWidget(self.btn_id_ratio_lock)
+        gb_size_layout.addWidget(QLabel("កម្ពស់ (H):"))
+        gb_size_layout.addWidget(self.sb_id_h)
+        gb_size.setLayout(gb_size_layout)
+        left_layout.addWidget(gb_size)
+        
+        gb_qty = QGroupBox("៤. ចំនួនបោះពុម្ព / Print Quantity")
         gb_qty_layout = QVBoxLayout()
         self.sb_id_qty = QSpinBox()
         self.sb_id_qty.setRange(1, 50)
@@ -3384,16 +3589,30 @@ class PhotoPrintApp(QMainWindow):
         gb_qty.setLayout(gb_qty_layout)
         left_layout.addWidget(gb_qty)
         
-        gb_margin = QGroupBox("៤. តម្រឹមកាត / Alignment & Margin")
+        gb_margin = QGroupBox("៥. តម្រឹមកាត / Alignment & Margin")
         gb_margin_layout = QGridLayout()
         
-        btn_center_h = QPushButton("ចំកណ្តាល (ផ្តេក)")
+        btn_center_h = QPushButton("កណ្តាល (ផ្ដេក)")
         btn_center_h.clicked.connect(self.id_center_h)
-        btn_center_v = QPushButton("ចំកណ្តាល (បញ្ឈរ)")
+        btn_center_v = QPushButton("កណ្តាល (បញ្ឈរ)")
         btn_center_v.clicked.connect(self.id_center_v)
+        
+        btn_align_left = QPushButton("គែមឆ្វេង (Left)")
+        btn_align_left.clicked.connect(self.id_align_left)
+        btn_align_right = QPushButton("គែមស្តាំ (Right)")
+        btn_align_right.clicked.connect(self.id_align_right)
+        
+        btn_align_top = QPushButton("គែមលើ (Top)")
+        btn_align_top.clicked.connect(self.id_align_top)
+        btn_align_bottom = QPushButton("គែមក្រោម (Bottom)")
+        btn_align_bottom.clicked.connect(self.id_align_bottom)
         
         gb_margin_layout.addWidget(btn_center_h, 0, 0)
         gb_margin_layout.addWidget(btn_center_v, 0, 1)
+        gb_margin_layout.addWidget(btn_align_left, 1, 0)
+        gb_margin_layout.addWidget(btn_align_right, 1, 1)
+        gb_margin_layout.addWidget(btn_align_top, 2, 0)
+        gb_margin_layout.addWidget(btn_align_bottom, 2, 1)
         
         self.sb_margin_top = QDoubleSpinBox()
         self.sb_margin_bottom = QDoubleSpinBox()
@@ -3405,14 +3624,14 @@ class PhotoPrintApp(QMainWindow):
             sb.setValue(10)
             sb.valueChanged.connect(self.update_id_preview)
             
-        gb_margin_layout.addWidget(QLabel("គែមលើ:"), 1, 0)
-        gb_margin_layout.addWidget(self.sb_margin_top, 1, 1)
-        gb_margin_layout.addWidget(QLabel("គែមក្រោម:"), 2, 0)
-        gb_margin_layout.addWidget(self.sb_margin_bottom, 2, 1)
-        gb_margin_layout.addWidget(QLabel("គែមឆ្វេង:"), 3, 0)
-        gb_margin_layout.addWidget(self.sb_margin_left, 3, 1)
-        gb_margin_layout.addWidget(QLabel("គែមស្តាំ:"), 4, 0)
-        gb_margin_layout.addWidget(self.sb_margin_right, 4, 1)
+        gb_margin_layout.addWidget(QLabel("គែមលើ (Top):"), 3, 0)
+        gb_margin_layout.addWidget(self.sb_margin_top, 3, 1)
+        gb_margin_layout.addWidget(QLabel("គែមក្រោម (Bottom):"), 4, 0)
+        gb_margin_layout.addWidget(self.sb_margin_bottom, 4, 1)
+        gb_margin_layout.addWidget(QLabel("គែមឆ្វេង (Left):"), 5, 0)
+        gb_margin_layout.addWidget(self.sb_margin_left, 5, 1)
+        gb_margin_layout.addWidget(QLabel("គែមស្តាំ (Right):"), 6, 0)
+        gb_margin_layout.addWidget(self.sb_margin_right, 6, 1)
         
         gb_margin.setLayout(gb_margin_layout)
         left_layout.addWidget(gb_margin)
@@ -3473,9 +3692,32 @@ class PhotoPrintApp(QMainWindow):
         self.sb_margin_bottom.setValue(self.id_preview.margin_bottom)
         self.sb_margin_bottom.blockSignals(False)
 
+    def id_align_left(self):
+        self.id_preview.align_left()
+        self.sb_margin_left.blockSignals(True)
+        self.sb_margin_left.setValue(self.id_preview.margin_left)
+        self.sb_margin_left.blockSignals(False)
+
+    def id_align_right(self):
+        self.id_preview.align_right()
+        self.sb_margin_right.blockSignals(True)
+        self.sb_margin_right.setValue(self.id_preview.margin_right)
+        self.sb_margin_right.blockSignals(False)
+
+    def id_align_top(self):
+        self.id_preview.align_top()
+        self.sb_margin_top.blockSignals(True)
+        self.sb_margin_top.setValue(self.id_preview.margin_top)
+        self.sb_margin_top.blockSignals(False)
+
+    def id_align_bottom(self):
+        self.id_preview.align_bottom()
+        self.sb_margin_bottom.blockSignals(True)
+        self.sb_margin_bottom.setValue(self.id_preview.margin_bottom)
+        self.sb_margin_bottom.blockSignals(False)
+
     def apply_id_filters(self, *args):
         idx = self.cb_id_filter.currentIndex()
-        do_sharpen = self.chk_id_sharpen.isChecked()
         do_ai = self.chk_id_ai.isChecked()
         
         def process_img(img):
@@ -3507,10 +3749,6 @@ class PhotoPrintApp(QMainWindow):
                     print("AI Super Resolution Error:", e)
                 finally:
                     QApplication.restoreOverrideCursor()
-
-            if do_sharpen:
-                gaussian = cv2.GaussianBlur(base_img, (0, 0), 2.0)
-                base_img = cv2.addWeighted(base_img, 1.5, gaussian, -0.5, 0)
 
             if idx == 0:
                 res = base_img
@@ -3548,9 +3786,19 @@ class PhotoPrintApp(QMainWindow):
                 bg_f = bg.astype(np.float32) + 1 # Avoid division by zero
                 scan = cv2.divide(gray_f, bg_f, scale=255.0)
                 scan = np.clip(scan, 0, 255).astype(np.uint8)
+                # 1. Sharpen to make details and text edges very clear
+                gaussian = cv2.GaussianBlur(scan, (0, 0), 2.0)
+                scan = cv2.addWeighted(scan, 1.8, gaussian, -0.8, 0)
                 
-                # Boost contrast (Alpha) and darken text (Beta)
-                scan = cv2.convertScaleAbs(scan, alpha=2.2, beta=-110)
+                # 2. Darken midtones (gamma correction) to make text bolder (ដិត) 
+                # without destroying the face highlights
+                gamma = 0.65
+                invGamma = 1.0 / gamma
+                table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+                scan = cv2.LUT(scan, table)
+                
+                # 3. Gentle contrast boost to ensure background is white and text is dark
+                scan = cv2.convertScaleAbs(scan, alpha=1.2, beta=-10)
                 
                 res = cv2.cvtColor(scan, cv2.COLOR_GRAY2RGB)
             else:
@@ -3563,6 +3811,21 @@ class PhotoPrintApp(QMainWindow):
 
         self.id_front_pixmap = process_img(self.id_front_cv_img)
         self.id_back_pixmap = process_img(self.id_back_cv_img)
+        
+        def update_lbl(lbl, orig_img, final_pixmap):
+            if orig_img is not None and final_pixmap is not None:
+                orig_h, orig_w = orig_img.shape[:2]
+                fin_w, fin_h = final_pixmap.width(), final_pixmap.height()
+                if orig_w == fin_w and orig_h == fin_h:
+                    lbl.setText(f"ទំហំដើម: {orig_w} x {orig_h} px")
+                else:
+                    lbl.setText(f"ទំហំដើម: {orig_w} x {orig_h} px | ដំឡើង: {fin_w} x {fin_h} px")
+            else:
+                lbl.setText("")
+
+        update_lbl(self.lbl_info_front, self.id_front_cv_img, self.id_front_pixmap)
+        update_lbl(self.lbl_info_back, self.id_back_cv_img, self.id_back_pixmap)
+        
         self.update_id_preview()
 
     def load_id_front(self):
@@ -3614,13 +3877,27 @@ class PhotoPrintApp(QMainWindow):
         self.id_preview.margin_top = self.sb_margin_top.value()
         self.id_preview.margin_bottom = self.sb_margin_bottom.value()
         
+        self.id_preview.apply_rounded_corners = self.chk_id_rounded.isChecked()
+        
         self.id_preview.photo_positions.clear()
         
-        # ID Card Standard Size CR80: 85.6mm x 53.98mm
-        id_w, id_h = 85.6, 54.0
+        # ID Card Size from UI
+        id_w = self.sb_id_w.value()
+        id_h = self.sb_id_h.value()
         gap = 5.0
         
-        start_x = self.id_preview.margin_left
+        # Default Alignment: Top Center
+        cards_in_row = 0
+        if self.id_front_pixmap: cards_in_row += 1
+        if self.id_back_pixmap: cards_in_row += 1
+        
+        if cards_in_row > 0:
+            total_w = cards_in_row * id_w + (cards_in_row - 1) * gap
+            avail_w = pw - self.id_preview.margin_left - self.id_preview.margin_right
+            start_x = self.id_preview.margin_left + (avail_w - total_w) / 2.0
+        else:
+            start_x = self.id_preview.margin_left
+            
         start_y = self.id_preview.margin_top
         
         qty = self.sb_id_qty.value()
@@ -3690,12 +3967,22 @@ class PhotoPrintApp(QMainWindow):
             w, h = pos['w'] * scale, pos['h'] * scale
             rect = QRectF(x, y, w, h)
             
+            painter.save()
+            if getattr(self.id_preview, 'apply_rounded_corners', False):
+                from PyQt5.QtGui import QPainterPath
+                path = QPainterPath()
+                radius_px = 3.18 * scale
+                path.addRoundedRect(rect, radius_px, radius_px)
+                painter.setClipPath(path)
+                
             img = pos.get('image_pixmap')
             if img and not img.isNull():
                 painter.drawPixmap(rect.toRect(), img)
             else:
                 painter.setPen(QPen(Qt.black, 1))
                 painter.drawRect(rect.toRect())
+                
+            painter.restore()
                 
         painter.end()
         if show_msg:
