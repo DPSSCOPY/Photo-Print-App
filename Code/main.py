@@ -3,9 +3,193 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QPushButton, QGroupBox, 
                              QComboBox, QSpinBox, QDoubleSpinBox, QRadioButton, 
                              QCheckBox, QSlider, QGridLayout, QSizePolicy, QFileDialog, QButtonGroup,
-                             QTabWidget, QTextEdit, QFontComboBox, QColorDialog)
+                             QTabWidget, QTextEdit, QFontComboBox, QColorDialog, QDialog,
+                             QGraphicsView, QGraphicsScene, QGraphicsPolygonItem, QGraphicsEllipseItem)
 from PyQt5.QtCore import Qt, QRectF, pyqtSignal, QPointF, QPoint
-from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPixmap, QTransform
+from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPixmap, QTransform, QImage
+import cv2
+import numpy as np
+class CornerHandle(QGraphicsEllipseItem):
+    def __init__(self, x, y, radius, index, parent=None):
+        super().__init__(-radius, -radius, radius * 2, radius * 2, parent)
+        self.setPos(x, y)
+        self.index = index
+        from PyQt5.QtGui import QBrush, QColor, QPen
+        from PyQt5.QtCore import Qt
+        self.setBrush(QBrush(QColor(0, 120, 215, 200)))
+        self.setPen(QPen(Qt.white, 2))
+        self.setFlag(QGraphicsEllipseItem.ItemIsMovable, True)
+        self.setFlag(QGraphicsEllipseItem.ItemSendsGeometryChanges, True)
+        self.setCursor(Qt.CrossCursor)
+        self.dialog = None
+
+    def itemChange(self, change, value):
+        from PyQt5.QtWidgets import QGraphicsEllipseItem
+        if change == QGraphicsEllipseItem.ItemPositionChange and self.dialog:
+            self.dialog.update_polygon()
+        return super().itemChange(change, value)
+
+class PerspectiveCropDialog(QDialog):
+    def __init__(self, image_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("កែតម្រូវជ្រុងកាត / Adjust ID Card Corners")
+        self.image_path = image_path
+        self.cv_img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+        
+        self.layout = QVBoxLayout(self)
+        
+        lbl_info = QLabel("<b>របៀបប្រើ៖</b> សូមទាញចំណុចពណ៌ខៀវទាំង ៤ ឱ្យចំជ្រុងរបស់កាត រួចចុច 'យល់ព្រម (Crop)'")
+        lbl_info.setStyleSheet("color: #333; padding: 5px; background: #e0f2fe; border-radius: 4px;")
+        self.layout.addWidget(lbl_info)
+        
+        from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene
+        self.view = QGraphicsView()
+        self.scene = QGraphicsScene()
+        self.view.setScene(self.scene)
+        self.layout.addWidget(self.view)
+        
+        self.qpixmap = QPixmap(image_path)
+        self.pixmap_item = self.scene.addPixmap(self.qpixmap)
+        
+        self.points = self.detect_corners()
+        
+        from PyQt5.QtWidgets import QGraphicsPolygonItem
+        from PyQt5.QtGui import QPolygonF, QBrush, QColor, QPen
+        from PyQt5.QtCore import Qt
+        self.polygon_item = QGraphicsPolygonItem()
+        self.polygon_item.setPen(QPen(QColor(0, 120, 215), 2, Qt.DashLine))
+        self.polygon_item.setBrush(QBrush(QColor(0, 120, 215, 50)))
+        self.scene.addItem(self.polygon_item)
+        
+        self.handles = []
+        radius = max(10, min(self.qpixmap.width(), self.qpixmap.height()) * 0.02)
+        for i, pt in enumerate(self.points):
+            handle = CornerHandle(pt[0], pt[1], radius, i)
+            handle.dialog = self
+            self.scene.addItem(handle)
+            self.handles.append(handle)
+            
+        self.update_polygon()
+        
+        btn_layout = QHBoxLayout()
+        btn_crop = QPushButton("យល់ព្រម / Crop")
+        btn_crop.setStyleSheet("background-color: #2b52ff; color: white; padding: 10px; font-weight: bold;")
+        btn_crop.clicked.connect(self.accept)
+        
+        btn_cancel = QPushButton("បោះបង់ / Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_crop)
+        self.layout.addLayout(btn_layout)
+        
+        self.resize(1000, 700)
+        self.cropped_pixmap = None
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        from PyQt5.QtCore import Qt
+        self.view.fitInView(self.pixmap_item, Qt.KeepAspectRatio)
+
+    def update_polygon(self):
+        from PyQt5.QtGui import QPolygonF
+        polygon = QPolygonF()
+        for handle in self.handles:
+            polygon.append(handle.pos())
+        self.polygon_item.setPolygon(polygon)
+
+    def detect_corners(self):
+        img = self.cv_img
+        if img is None:
+            return self.default_corners()
+            
+        orig_h, orig_w = img.shape[:2]
+        ratio = orig_h / 800.0
+        if ratio > 1:
+            dim = (int(orig_w / ratio), 800)
+            resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+        else:
+            resized = img.copy()
+            ratio = 1.0
+
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        edged = cv2.Canny(gray, 75, 200)
+
+        contours, _ = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
+
+        screenCnt = None
+        for c in contours:
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+            if len(approx) == 4:
+                screenCnt = approx
+                break
+
+        if screenCnt is None:
+            return self.default_corners()
+
+        screenCnt = screenCnt.reshape(4, 2) * ratio
+        
+        rect = np.zeros((4, 2), dtype="float32")
+        s = screenCnt.sum(axis=1)
+        rect[0] = screenCnt[np.argmin(s)]
+        rect[2] = screenCnt[np.argmax(s)]
+        
+        diff = np.diff(screenCnt, axis=1)
+        rect[1] = screenCnt[np.argmin(diff)]
+        rect[3] = screenCnt[np.argmax(diff)]
+        
+        return rect.tolist()
+
+    def default_corners(self):
+        w = self.qpixmap.width()
+        h = self.qpixmap.height()
+        mx = w * 0.1
+        my = h * 0.1
+        return [[mx, my], [w - mx, my], [w - mx, h - my], [mx, h - my]]
+
+    def accept(self):
+        if self.cv_img is not None:
+            rect = np.array([
+                [self.handles[0].pos().x(), self.handles[0].pos().y()],
+                [self.handles[1].pos().x(), self.handles[1].pos().y()],
+                [self.handles[2].pos().x(), self.handles[2].pos().y()],
+                [self.handles[3].pos().x(), self.handles[3].pos().y()]
+            ], dtype="float32")
+            
+            (tl, tr, br, bl) = rect
+            widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+            widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+            maxWidth = max(int(widthA), int(widthB))
+
+            heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+            heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+            maxHeight = max(int(heightA), int(heightB))
+
+            dst = np.array([
+                [0, 0],
+                [maxWidth - 1, 0],
+                [maxWidth - 1, maxHeight - 1],
+                [0, maxHeight - 1]], dtype="float32")
+
+            M = cv2.getPerspectiveTransform(rect, dst)
+            warped = cv2.warpPerspective(self.cv_img, M, (maxWidth, maxHeight))
+            
+            if warped.shape[0] > warped.shape[1]:
+                warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
+
+            warped_rgb = cv2.cvtColor(warped, cv2.COLOR_BGR2RGB)
+            self.cropped_cv_img = warped_rgb.copy()
+            h, w, ch = warped_rgb.shape
+            bytes_per_line = ch * w
+            from PyQt5.QtGui import QImage
+            qimg = QImage(warped_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            self.cropped_pixmap = QPixmap.fromImage(qimg.copy())
+        super().accept()
+
 
 class PreviewWidget(QWidget):
     """ Custom Widget សម្រាប់គូរទិដ្ឋភាពក្រដាស និងក្រឡារូបថត (Live Print Preview) """
@@ -1709,8 +1893,13 @@ class PhotoPrintApp(QMainWindow):
         self.tab2 = QWidget()
         self.initTextUI(self.tab2)
         
+        # TAB 3: ID Card Print
+        self.tab3 = QWidget()
+        self.initIDCardUI(self.tab3)
+        
         self.tabs.addTab(self.tab1, "១. បោះពុម្ពរូបថត / Photo Print")
         self.tabs.addTab(self.tab2, "២. សរសេរអក្សរធំ / Large Text Banner")
+        self.tabs.addTab(self.tab3, "៣. បោះពុម្ពកាតសម្គាល់ខ្លួន / ID Card Print")
         
         layout = QVBoxLayout(main_widget)
         layout.addWidget(self.tabs)
@@ -3125,6 +3314,409 @@ class PhotoPrintApp(QMainWindow):
         if show_msg:
             QMessageBox.information(self, "ជោគជ័យ / Success", "ឯកសារ PDF ត្រូវបានរក្សាទុកដោយជោគជ័យ! / PDF saved successfully!")
         return file_name
+    def initIDCardUI(self, parent_widget):
+        from PyQt5.QtWidgets import QScrollArea
+        layout = QHBoxLayout(parent_widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Left Panel (Controls)
+        left_panel = QWidget()
+        left_panel.setFixedWidth(320)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setAlignment(Qt.AlignTop)
+        
+        title_lbl = QLabel("<b>បោះពុម្ពកាតសម្គាល់ខ្លួន / ID Card Printer</b>")
+        title_lbl.setFont(QFont("Khmer OS Battambang", 12))
+        left_layout.addWidget(title_lbl)
+        
+        gb_id = QGroupBox("១. បញ្ចូលរូបកាត / Load ID Card")
+        gb_id_layout = QVBoxLayout()
+        
+        self.btn_load_front = QPushButton("បញ្ចូលរូបកាតមុខ / Load Front")
+        self.btn_load_front.setStyleSheet("background-color: #0084c7; color: white; padding: 10px; border-radius: 5px;")
+        self.btn_load_front.clicked.connect(self.load_id_front)
+        
+        self.btn_load_back = QPushButton("បញ្ចូលរូបកាតក្រោយ / Load Back")
+        self.btn_load_back.setStyleSheet("background-color: #0084c7; color: white; padding: 10px; border-radius: 5px;")
+        self.btn_load_back.clicked.connect(self.load_id_back)
+        
+        self.btn_clear_id = QPushButton("លុបរូបកាត / Clear ID Cards")
+        self.btn_clear_id.setStyleSheet("background-color: #e74c3c; color: white; padding: 10px; border-radius: 5px;")
+        self.btn_clear_id.clicked.connect(self.clear_id_cards)
+        
+        self.cb_id_filter = QComboBox()
+        self.cb_id_filter.addItems(["រូបដើម / Original", "ពណ៌វេទមន្ត / Magic Color", "ពណ៌ប្រផេះ / Grayscale", "ស-ខ្មៅ / B&W Scan"])
+        self.cb_id_filter.currentIndexChanged.connect(self.apply_id_filters)
+        
+        self.chk_id_sharpen = QCheckBox("ធ្វើឱ្យរូបច្បាស់ (Auto Sharpen)")
+        self.chk_id_sharpen.stateChanged.connect(self.apply_id_filters)
+        
+        self.chk_id_ai = QCheckBox("ប្រើប្រាស់ AI បង្កើនភាពច្បាស់ (AI Enhance)")
+        self.chk_id_ai.setStyleSheet("color: #d946ef; font-weight: bold;")
+        self.chk_id_ai.stateChanged.connect(self.apply_id_filters)
+        
+        gb_id_layout.addWidget(self.btn_load_front)
+        gb_id_layout.addWidget(self.btn_load_back)
+        gb_id_layout.addWidget(QLabel("ប្រភេទពណ៌ / Color Filter:"))
+        gb_id_layout.addWidget(self.cb_id_filter)
+        gb_id_layout.addWidget(self.chk_id_sharpen)
+        gb_id_layout.addWidget(self.chk_id_ai)
+        gb_id_layout.addWidget(self.btn_clear_id)
+        gb_id.setLayout(gb_id_layout)
+        left_layout.addWidget(gb_id)
+        
+        gb_paper = QGroupBox("២. ទំហំក្រដាស / Paper Size")
+        gb_paper_layout = QVBoxLayout()
+        self.cb_id_paper = QComboBox()
+        self.cb_id_paper.addItems(["A4 (210 x 297 mm)", "A5 (148 x 210 mm)", "ក្រដាសរូបថត (10x15 cm)"])
+        self.cb_id_paper.currentIndexChanged.connect(self.update_id_preview)
+        gb_paper_layout.addWidget(self.cb_id_paper)
+        gb_paper.setLayout(gb_paper_layout)
+        left_layout.addWidget(gb_paper)
+        
+        gb_qty = QGroupBox("៣. ចំនួនបោះពុម្ព / Print Quantity")
+        gb_qty_layout = QVBoxLayout()
+        self.sb_id_qty = QSpinBox()
+        self.sb_id_qty.setRange(1, 50)
+        self.sb_id_qty.setValue(1)
+        self.sb_id_qty.valueChanged.connect(self.update_id_preview)
+        gb_qty_layout.addWidget(self.sb_id_qty)
+        gb_qty.setLayout(gb_qty_layout)
+        left_layout.addWidget(gb_qty)
+        
+        gb_margin = QGroupBox("៤. តម្រឹមកាត / Alignment & Margin")
+        gb_margin_layout = QGridLayout()
+        
+        btn_center_h = QPushButton("ចំកណ្តាល (ផ្តេក)")
+        btn_center_h.clicked.connect(self.id_center_h)
+        btn_center_v = QPushButton("ចំកណ្តាល (បញ្ឈរ)")
+        btn_center_v.clicked.connect(self.id_center_v)
+        
+        gb_margin_layout.addWidget(btn_center_h, 0, 0)
+        gb_margin_layout.addWidget(btn_center_v, 0, 1)
+        
+        self.sb_margin_top = QDoubleSpinBox()
+        self.sb_margin_bottom = QDoubleSpinBox()
+        self.sb_margin_left = QDoubleSpinBox()
+        self.sb_margin_right = QDoubleSpinBox()
+        
+        for sb in [self.sb_margin_top, self.sb_margin_bottom, self.sb_margin_left, self.sb_margin_right]:
+            sb.setRange(0, 500)
+            sb.setValue(10)
+            sb.valueChanged.connect(self.update_id_preview)
+            
+        gb_margin_layout.addWidget(QLabel("គែមលើ:"), 1, 0)
+        gb_margin_layout.addWidget(self.sb_margin_top, 1, 1)
+        gb_margin_layout.addWidget(QLabel("គែមក្រោម:"), 2, 0)
+        gb_margin_layout.addWidget(self.sb_margin_bottom, 2, 1)
+        gb_margin_layout.addWidget(QLabel("គែមឆ្វេង:"), 3, 0)
+        gb_margin_layout.addWidget(self.sb_margin_left, 3, 1)
+        gb_margin_layout.addWidget(QLabel("គែមស្តាំ:"), 4, 0)
+        gb_margin_layout.addWidget(self.sb_margin_right, 4, 1)
+        
+        gb_margin.setLayout(gb_margin_layout)
+        left_layout.addWidget(gb_margin)
+        
+        layout.addWidget(left_panel)
+        
+        # Center Panel (Preview)
+        self.id_preview = PreviewWidget()
+        self.id_preview.is_manual = True
+        self.id_preview.photo_positions = []
+        
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("QScrollArea { background-color: #dbe2e9; border: none; }")
+        scroll_area.setWidget(self.id_preview)
+        layout.addWidget(scroll_area, 1)
+        
+        # Right Panel
+        right_panel = QWidget()
+        right_panel.setFixedWidth(200)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setAlignment(Qt.AlignTop)
+        
+        btn_print_pdf = QPushButton("រក្សាទុកជា PDF / Save PDF")
+        btn_print_pdf.setStyleSheet("background-color: #2b52ff; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
+        btn_print_pdf.clicked.connect(self.save_id_pdf)
+        
+        btn_print_foxit = QPushButton("បញ្ចូនទៅ Foxit PDF / Print via Foxit")
+        btn_print_foxit.setStyleSheet("background-color: #5850ec; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
+        btn_print_foxit.clicked.connect(self.print_id_foxit)
+        
+        right_layout.addWidget(btn_print_pdf)
+        right_layout.addWidget(btn_print_foxit)
+        
+        layout.addWidget(right_panel)
+        
+        self.id_front_cv_img = None
+        self.id_back_cv_img = None
+        self.id_front_pixmap = None
+        self.id_back_pixmap = None
+        self.update_id_preview()
+
+    def id_center_h(self):
+        self.id_preview.center_horizontally()
+        self.sb_margin_left.blockSignals(True)
+        self.sb_margin_left.setValue(self.id_preview.margin_left)
+        self.sb_margin_left.blockSignals(False)
+        self.sb_margin_right.blockSignals(True)
+        self.sb_margin_right.setValue(self.id_preview.margin_right)
+        self.sb_margin_right.blockSignals(False)
+
+    def id_center_v(self):
+        self.id_preview.center_vertically()
+        self.sb_margin_top.blockSignals(True)
+        self.sb_margin_top.setValue(self.id_preview.margin_top)
+        self.sb_margin_top.blockSignals(False)
+        self.sb_margin_bottom.blockSignals(True)
+        self.sb_margin_bottom.setValue(self.id_preview.margin_bottom)
+        self.sb_margin_bottom.blockSignals(False)
+
+    def apply_id_filters(self, *args):
+        idx = self.cb_id_filter.currentIndex()
+        do_sharpen = self.chk_id_sharpen.isChecked()
+        do_ai = self.chk_id_ai.isChecked()
+        
+        def process_img(img):
+            if img is None: return None
+            
+            base_img = img.copy()
+            
+            if do_ai:
+                from PyQt5.QtWidgets import QApplication
+                from PyQt5.QtCore import Qt
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    import os, urllib.request
+                    from cv2 import dnn_superres
+                    model_path = "FSRCNN_x4.pb"
+                    if not os.path.exists(model_path):
+                        url = "https://github.com/Saafke/FSRCNN_Tensorflow/raw/master/models/FSRCNN_x4.pb"
+                        urllib.request.urlretrieve(url, model_path)
+                    
+                    sr = dnn_superres.DnnSuperResImpl_create()
+                    sr.readModel(model_path)
+                    sr.setModel("fsrcnn", 4)
+                    base_img = sr.upsample(base_img)
+                    
+                    # Apply strong but natural Sharpening (Unsharp Mask)
+                    gaussian = cv2.GaussianBlur(base_img, (0, 0), 3.0)
+                    base_img = cv2.addWeighted(base_img, 1.8, gaussian, -0.8, 0)
+                except Exception as e:
+                    print("AI Super Resolution Error:", e)
+                finally:
+                    QApplication.restoreOverrideCursor()
+
+            if do_sharpen:
+                gaussian = cv2.GaussianBlur(base_img, (0, 0), 2.0)
+                base_img = cv2.addWeighted(base_img, 1.5, gaussian, -0.5, 0)
+
+            if idx == 0:
+                res = base_img
+            elif idx == 1:
+                hsv = cv2.cvtColor(base_img, cv2.COLOR_RGB2HSV).astype(np.float32)
+                hsv[:, :, 1] *= 1.5
+                hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
+                hsv[:, :, 2] *= 1.2
+                hsv[:, :, 2] = np.clip(hsv[:, :, 2], 0, 255)
+                res = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
+            elif idx == 2:
+                gray = cv2.cvtColor(base_img, cv2.COLOR_RGB2GRAY)
+                res = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+            elif idx == 3:
+                gray = cv2.cvtColor(base_img, cv2.COLOR_RGB2GRAY)
+                
+                # Fast Background Estimation (Mimics CamScanner)
+                h_img, w_img = gray.shape
+                scale = 150.0 / w_img
+                if scale < 1.0:
+                    small_gray = cv2.resize(gray, (0, 0), fx=scale, fy=scale)
+                else:
+                    small_gray = gray.copy()
+                
+                # Use Morphological Close to erase text/dark lines from the background map
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+                bg_small = cv2.morphologyEx(small_gray, cv2.MORPH_CLOSE, kernel)
+                bg_small = cv2.GaussianBlur(bg_small, (11, 11), 0)
+                
+                # Resize background map back to original size
+                bg = cv2.resize(bg_small, (w_img, h_img))
+                
+                # Divide image by background to make paper purely white while keeping photo details
+                gray_f = gray.astype(np.float32)
+                bg_f = bg.astype(np.float32) + 1 # Avoid division by zero
+                scan = cv2.divide(gray_f, bg_f, scale=255.0)
+                scan = np.clip(scan, 0, 255).astype(np.uint8)
+                
+                # Boost contrast (Alpha) and darken text (Beta)
+                scan = cv2.convertScaleAbs(scan, alpha=2.2, beta=-110)
+                
+                res = cv2.cvtColor(scan, cv2.COLOR_GRAY2RGB)
+            else:
+                res = base_img
+                
+            h, w, ch = res.shape
+            from PyQt5.QtGui import QImage, QPixmap
+            qimg = QImage(res.data, w, h, ch * w, QImage.Format_RGB888)
+            return QPixmap.fromImage(qimg.copy())
+
+        self.id_front_pixmap = process_img(self.id_front_cv_img)
+        self.id_back_pixmap = process_img(self.id_back_cv_img)
+        self.update_id_preview()
+
+    def load_id_front(self):
+        from PyQt5.QtWidgets import QDialog
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបកាតមុខ / Select Front ID", "", "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
+        if file_name:
+            dialog = PerspectiveCropDialog(file_name, self)
+            if dialog.exec_() == QDialog.Accepted and dialog.cropped_pixmap:
+                self.id_front_cv_img = dialog.cropped_cv_img
+            else:
+                img = cv2.imdecode(np.fromfile(file_name, dtype=np.uint8), cv2.IMREAD_COLOR)
+                self.id_front_cv_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
+            self.apply_id_filters()
+
+    def load_id_back(self):
+        from PyQt5.QtWidgets import QDialog
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបកាតក្រោយ / Select Back ID", "", "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
+        if file_name:
+            dialog = PerspectiveCropDialog(file_name, self)
+            if dialog.exec_() == QDialog.Accepted and dialog.cropped_pixmap:
+                self.id_back_cv_img = dialog.cropped_cv_img
+            else:
+                img = cv2.imdecode(np.fromfile(file_name, dtype=np.uint8), cv2.IMREAD_COLOR)
+                self.id_back_cv_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
+            self.apply_id_filters()
+            
+    def clear_id_cards(self):
+        self.id_front_cv_img = None
+        self.id_back_cv_img = None
+        self.id_front_pixmap = None
+        self.id_back_pixmap = None
+        self.update_id_preview()
+
+    def update_id_preview(self):
+        # Update Paper Size
+        paper_sizes = {
+            0: (210.0, 297.0),
+            1: (148.0, 210.0),
+            2: (100.0, 150.0)
+        }
+        idx = self.cb_id_paper.currentIndex()
+        pw, ph = paper_sizes.get(idx, (210.0, 297.0))
+        self.id_preview.paper_w = pw
+        self.id_preview.paper_h = ph
+        self.id_preview.margin_left = self.sb_margin_left.value()
+        self.id_preview.margin_right = self.sb_margin_right.value()
+        self.id_preview.margin_top = self.sb_margin_top.value()
+        self.id_preview.margin_bottom = self.sb_margin_bottom.value()
+        
+        self.id_preview.photo_positions.clear()
+        
+        # ID Card Standard Size CR80: 85.6mm x 53.98mm
+        id_w, id_h = 85.6, 54.0
+        gap = 5.0
+        
+        start_x = self.id_preview.margin_left
+        start_y = self.id_preview.margin_top
+        
+        qty = self.sb_id_qty.value()
+        
+        curr_y = start_y
+        for i in range(qty):
+            # Check if fits on paper vertically
+            if curr_y + id_h > self.id_preview.paper_h - self.id_preview.margin_bottom:
+                break
+            
+            # Front Card
+            if self.id_front_pixmap:
+                self.id_preview.photo_positions.append({
+                    'x': start_x, 'y': curr_y,
+                    'w': id_w, 'h': id_h, 'label': 'Front',
+                    'image_pixmap': self.id_front_pixmap,
+                    'scale': 1.0, 'pan_x': 0.0, 'pan_y': 0.0, 'rotation_angle': 0,
+                    'selected': False
+                })
+            
+            # Back Card (side-by-side)
+            if self.id_back_pixmap:
+                self.id_preview.photo_positions.append({
+                    'x': start_x + id_w + gap, 'y': curr_y,
+                    'w': id_w, 'h': id_h, 'label': 'Back',
+                    'image_pixmap': self.id_back_pixmap,
+                    'scale': 1.0, 'pan_x': 0.0, 'pan_y': 0.0, 'rotation_angle': 0,
+                    'selected': False
+                })
+            
+            curr_y += id_h + gap
+            
+        self.id_preview.update()
+
+    def save_id_pdf(self, show_msg=True):
+        from PyQt5.QtWidgets import QMessageBox
+        import os
+        from datetime import datetime
+        from PyQt5.QtGui import QPdfWriter, QPageSize, QPageLayout, QPainter, QTransform
+        from PyQt5.QtCore import QSizeF, QMarginsF, Qt, QRectF
+        
+        file_name = ""
+        if hasattr(self, 'default_pdf_folder') and self.default_pdf_folder and os.path.isdir(self.default_pdf_folder):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_name = os.path.join(self.default_pdf_folder, f"IDCard_{timestamp}.pdf")
+        else:
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(self, "រក្សាទុកជា PDF / Save as PDF", "", "PDF Files (*.pdf)", options=options)
+            
+        if not file_name:
+            return None
+            
+        pdf_writer = QPdfWriter(file_name)
+        pdf_writer.setPageSize(QPageSize(QSizeF(self.id_preview.paper_w, self.id_preview.paper_h), QPageSize.Millimeter))
+        pdf_writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+        pdf_writer.setResolution(300)
+        
+        painter = QPainter(pdf_writer)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        
+        scale = 300 / 25.4
+        painter.fillRect(0, 0, int(self.id_preview.paper_w * scale), int(self.id_preview.paper_h * scale), Qt.white)
+        
+        for pos in self.id_preview.photo_positions:
+            x, y = pos['x'] * scale, pos['y'] * scale
+            w, h = pos['w'] * scale, pos['h'] * scale
+            rect = QRectF(x, y, w, h)
+            
+            img = pos.get('image_pixmap')
+            if img and not img.isNull():
+                painter.drawPixmap(rect.toRect(), img)
+            else:
+                painter.setPen(QPen(Qt.black, 1))
+                painter.drawRect(rect.toRect())
+                
+        painter.end()
+        if show_msg:
+            QMessageBox.information(self, "ជោគជ័យ / Success", "ឯកសារ PDF ត្រូវបានរក្សាទុកដោយជោគជ័យ! / PDF saved successfully!")
+        return file_name
+
+    def print_id_foxit(self):
+        import subprocess
+        from PyQt5.QtWidgets import QMessageBox
+        import os
+        
+        if not hasattr(self, 'foxit_path') or not self.foxit_path or not os.path.exists(self.foxit_path):
+            QMessageBox.warning(self, "មិនទាន់កំណត់កម្មវិធី / Not Configured", "សូមចូលទៅកាន់ Settings (⚙) ដើម្បីកំណត់ទីតាំងកម្មវិធី Foxit PDF ជាមុនសិន។")
+            return
+            
+        file_name = self.save_id_pdf(show_msg=False)
+        if file_name:
+            try:
+                subprocess.Popen([self.foxit_path, file_name])
+            except Exception as e:
+                QMessageBox.critical(self, "កំហុស / Error", f"មិនអាចបើកកម្មវិធី Foxit PDF បានទេ:\n{str(e)}")
 
 if __name__ == '__main__':
     import ctypes
