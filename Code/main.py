@@ -134,10 +134,14 @@ class PerspectiveCropDialog(QDialog):
 
     def change_image(self):
         from PyQt5.QtWidgets import QFileDialog
-        from PyQt5.QtCore import Qt
+        from PyQt5.QtCore import Qt, QSettings
+        import os
+        settings = QSettings("PhotoPrintApp", "Settings")
+        last_dir = settings.value("last_open_dir", "")
         options = QFileDialog.Options()
-        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបភាពថ្មី / Select New Image", "", "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
+        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបភាពថ្មី / Select New Image", last_dir, "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
         if file_name:
+            settings.setValue("last_open_dir", os.path.dirname(file_name))
             self.image_path = file_name
             self.cv_img = cv2.imdecode(np.fromfile(file_name, dtype=np.uint8), cv2.IMREAD_COLOR)
             self.qpixmap = QPixmap(file_name)
@@ -183,75 +187,66 @@ class PerspectiveCropDialog(QDialog):
 
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
         
-        # 1. Bilateral Filter to smooth while keeping edges
-        gray = cv2.bilateralFilter(gray, 9, 75, 75)
+        # Blur to reduce noise
+        gray_blur = cv2.GaussianBlur(gray, (5, 5), 0)
         
-        best_contour = None
-        max_area = 0
-        best_screenCnt = None
+        # 1. Edge detection using Canny
+        edged1 = cv2.Canny(gray_blur, 75, 200)
         
-        # Define multiple thresholding and edge detection strategies
-        # 1. Auto Canny based on median
-        v = np.median(gray)
-        canny = cv2.Canny(gray, int(max(0, (1.0 - 0.33) * v)), int(min(255, (1.0 + 0.33) * v)))
+        # 2. Auto Canny based on median
+        v = np.median(gray_blur)
+        edged2 = cv2.Canny(gray_blur, int(max(0, (1.0 - 0.33) * v)), int(min(255, (1.0 + 0.33) * v)))
         
-        # 2. Normal Otsu
-        _, thresh_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        # 3. Adaptive thresholding
+        thresh = cv2.adaptiveThreshold(gray_blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
         
-        # 3. Inverted Otsu
-        _, thresh_otsu_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
-        
-        # 4. Adaptive Thresholding (Excellent for shadows/gradients)
-        thresh_adapt = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-        
-        # 5. Morphological Gradient
-        kernel_grad = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        gradient = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel_grad)
-        _, thresh_grad = cv2.threshold(gradient, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-        
-        methods = [canny, thresh_otsu, thresh_otsu_inv, thresh_adapt, thresh_grad]
+        # Morphological operations to close gaps
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        edged1_closed = cv2.morphologyEx(edged1, cv2.MORPH_CLOSE, kernel)
+        edged2_closed = cv2.morphologyEx(edged2, cv2.MORPH_CLOSE, kernel)
+        thresh_closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
         
-        min_area_thresh = (resized.shape[0] * resized.shape[1]) * 0.1
+        methods = [edged1, edged2, edged1_closed, edged2_closed, thresh, thresh_closed]
         
-        largest_area = 0
-        largest_c = None
-        
-        for edged in methods:
-            # Connect broken edges
-            edged = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
-            contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        best_screenCnt = None
+        max_area = 0
+        min_area_thresh = (resized.shape[0] * resized.shape[1]) * 0.05  # At least 5% of the image
+
+        for method in methods:
+            # RETR_LIST allows finding all contours, good if document is inside another shape
+            contours, _ = cv2.findContours(method, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+            # Sort contours by area in descending order and keep top 10
+            contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
             
             for c in contours:
                 area = cv2.contourArea(c)
-                
-                # Track the absolute largest area found, regardless of shape
-                if area > largest_area:
-                    largest_area = area
-                    largest_c = c
-                    
                 if area < min_area_thresh:
                     continue
                     
                 peri = cv2.arcLength(c, True)
+                # Try different epsilon values to approximate a 4-point polygon
                 for eps in [0.02, 0.03, 0.04, 0.05, 0.06]:
                     approx = cv2.approxPolyDP(c, eps * peri, True)
                     if len(approx) == 4 and area > max_area:
                         max_area = area
                         best_screenCnt = approx
-                        best_contour = c
                         break
-        
-        # If the best 4-point polygon is much smaller than the absolute largest contour, 
-        # it means we likely found an inner box (like a photo) and missed the true card border.
-        if best_screenCnt is not None and max_area < largest_area * 0.7:
-            best_screenCnt = None
-            
+
         screenCnt = best_screenCnt
-        
-        # Fallback to minAreaRect of the absolute largest contour across ALL methods
+
         if screenCnt is None:
-            if largest_c is not None and largest_area > min_area_thresh:
+            # Fallback: Find the largest contour and get its minAreaRect
+            largest_c = None
+            max_c_area = 0
+            for method in methods:
+                contours, _ = cv2.findContours(method, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for c in contours:
+                    area = cv2.contourArea(c)
+                    if area > max_c_area and area > min_area_thresh:
+                        max_c_area = area
+                        largest_c = c
+            
+            if largest_c is not None:
                 rect = cv2.minAreaRect(largest_c)
                 box = cv2.boxPoints(rect)
                 screenCnt = np.int32(box)
@@ -261,6 +256,7 @@ class PerspectiveCropDialog(QDialog):
 
         screenCnt = screenCnt.reshape(4, 2) * ratio
         
+        # Order points: top-left, top-right, bottom-right, bottom-left
         rect = np.zeros((4, 2), dtype="float32")
         s = screenCnt.sum(axis=1)
         rect[0] = screenCnt[np.argmin(s)]
@@ -2758,13 +2754,18 @@ class PhotoPrintApp(QMainWindow):
 
     def extract_text_from_image(self):
         from PyQt5.QtWidgets import QFileDialog, QDialog
+        from PyQt5.QtCore import QSettings
+        import os
+        settings = QSettings("PhotoPrintApp", "Settings")
+        last_dir = settings.value("last_open_dir", "")
         file_name, _ = QFileDialog.getOpenFileName(
             self,
             "ជ្រើសរើសរូបភាព ឬ PDF / Select Image or PDF",
-            "",
+            last_dir,
             "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)"
         )
         if file_name:
+            settings.setValue("last_open_dir", os.path.dirname(file_name))
             if file_name.lower().endswith('.pdf'):
                 dialog = PdfImportDialog(file_name, self)
                 if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
@@ -3052,11 +3053,17 @@ class PhotoPrintApp(QMainWindow):
             g['h'].setValue(w)
 
     def load_image(self):
+        from PyQt5.QtCore import QSettings
+        import os
+        settings = QSettings("PhotoPrintApp", "Settings")
+        last_dir = settings.value("last_open_dir", "")
         options = QFileDialog.Options()
-        file_names, _ = QFileDialog.getOpenFileNames(self, "ជ្រើសរើសរូបភាព ឬ PDF / Choose Photos or PDF", "", "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)", options=options)
+        file_names, _ = QFileDialog.getOpenFileNames(self, "ជ្រើសរើសរូបភាព ឬ PDF / Choose Photos or PDF", last_dir, "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)", options=options)
         
         if not file_names:
             return
+            
+        settings.setValue("last_open_dir", os.path.dirname(file_names[0]))
 
         valid_files = []
         from PyQt5.QtWidgets import QDialog
@@ -3179,9 +3186,14 @@ class PhotoPrintApp(QMainWindow):
         self.update_image_adjustment_buttons()
     
     def change_selected_image(self):
+        from PyQt5.QtCore import QSettings
+        import os
+        settings = QSettings("PhotoPrintApp", "Settings")
+        last_dir = settings.value("last_open_dir", "")
         options = QFileDialog.Options()
-        file_names, _ = QFileDialog.getOpenFileNames(self, "ជ្រើសរើសរូបភាពថ្មី / Choose New Photos", "", "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
+        file_names, _ = QFileDialog.getOpenFileNames(self, "ជ្រើសរើសរូបភាពថ្មី / Choose New Photos", last_dir, "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
         if file_names:
+            settings.setValue("last_open_dir", os.path.dirname(file_names[0]))
             selected_slots = [p for canvas in self.preview_canvases for p in canvas.photo_positions if p.get('selected', False)]
             for i, file_path in enumerate(file_names):
                 if i < len(selected_slots):
@@ -3843,11 +3855,11 @@ class PhotoPrintApp(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setAlignment(Qt.AlignTop)
         
-        btn_print_pdf = QPushButton("រក្សាទុកជា PDF / Save PDF")
+        btn_print_pdf = QPushButton("រក្សាទុកជា PDF")
         btn_print_pdf.setStyleSheet("background-color: #2b52ff; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
         btn_print_pdf.clicked.connect(self.save_id_pdf)
         
-        btn_print_foxit = QPushButton("បញ្ចូនទៅ Foxit PDF / Print via Foxit")
+        btn_print_foxit = QPushButton("បញ្ចូនទៅ Foxit PDF")
         btn_print_foxit.setStyleSheet("background-color: #5850ec; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
         btn_print_foxit.clicked.connect(self.print_id_foxit)
         
@@ -4020,9 +4032,14 @@ class PhotoPrintApp(QMainWindow):
 
     def load_id_front(self):
         from PyQt5.QtWidgets import QDialog
+        from PyQt5.QtCore import QSettings
+        import os
+        settings = QSettings("PhotoPrintApp", "Settings")
+        last_dir = settings.value("last_open_dir", "")
         options = QFileDialog.Options()
-        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបកាតមុខ ឬ PDF / Select Front ID or PDF", "", "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)", options=options)
+        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបកាតមុខ ឬ PDF / Select Front ID or PDF", last_dir, "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)", options=options)
         if file_name:
+            settings.setValue("last_open_dir", os.path.dirname(file_name))
             if file_name.lower().endswith('.pdf'):
                 dialog = PdfImportDialog(file_name, self)
                 if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
@@ -4043,9 +4060,14 @@ class PhotoPrintApp(QMainWindow):
 
     def load_id_back(self):
         from PyQt5.QtWidgets import QDialog
+        from PyQt5.QtCore import QSettings
+        import os
+        settings = QSettings("PhotoPrintApp", "Settings")
+        last_dir = settings.value("last_open_dir", "")
         options = QFileDialog.Options()
-        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបកាតក្រោយ ឬ PDF / Select Back ID or PDF", "", "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)", options=options)
+        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបកាតក្រោយ ឬ PDF / Select Back ID or PDF", last_dir, "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)", options=options)
         if file_name:
+            settings.setValue("last_open_dir", os.path.dirname(file_name))
             if file_name.lower().endswith('.pdf'):
                 dialog = PdfImportDialog(file_name, self)
                 if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
