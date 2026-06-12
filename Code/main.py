@@ -66,7 +66,7 @@ class MovablePolygonItem(QGraphicsPolygonItem):
             super().mouseReleaseEvent(event)
 
 class PerspectiveCropDialog(QDialog):
-    def __init__(self, image_path, parent=None):
+    def __init__(self, image_path, parent=None, initial_points=None):
         super().__init__(parent)
         self.setWindowTitle("កែតម្រូវជ្រុងកាត / Adjust ID Card Corners")
         self.image_path = image_path
@@ -87,7 +87,10 @@ class PerspectiveCropDialog(QDialog):
         self.qpixmap = QPixmap(image_path)
         self.pixmap_item = self.scene.addPixmap(self.qpixmap)
         
-        self.points = self.detect_corners()
+        if initial_points:
+            self.points = initial_points
+        else:
+            self.points = self.detect_corners()
         
         from PyQt5.QtGui import QPolygonF, QBrush, QColor, QPen
         from PyQt5.QtCore import Qt
@@ -107,13 +110,20 @@ class PerspectiveCropDialog(QDialog):
         self.update_polygon()
         
         btn_layout = QHBoxLayout()
+        
+        btn_change = QPushButton("ប្តូររូបភាព / Change Image")
+        btn_change.setStyleSheet("background-color: #f59e0b; color: white; padding: 10px; font-weight: bold; border-radius: 5px;")
+        btn_change.clicked.connect(self.change_image)
+        
         btn_crop = QPushButton("យល់ព្រម / Crop")
-        btn_crop.setStyleSheet("background-color: #2b52ff; color: white; padding: 10px; font-weight: bold;")
+        btn_crop.setStyleSheet("background-color: #2b52ff; color: white; padding: 10px; font-weight: bold; border-radius: 5px;")
         btn_crop.clicked.connect(self.accept)
         
         btn_cancel = QPushButton("បោះបង់ / Cancel")
+        btn_cancel.setStyleSheet("padding: 10px; border-radius: 5px;")
         btn_cancel.clicked.connect(self.reject)
         
+        btn_layout.addWidget(btn_change)
         btn_layout.addStretch()
         btn_layout.addWidget(btn_cancel)
         btn_layout.addWidget(btn_crop)
@@ -121,6 +131,29 @@ class PerspectiveCropDialog(QDialog):
         
         self.resize(1000, 700)
         self.cropped_pixmap = None
+
+    def change_image(self):
+        from PyQt5.QtWidgets import QFileDialog
+        from PyQt5.QtCore import Qt
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបភាពថ្មី / Select New Image", "", "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
+        if file_name:
+            self.image_path = file_name
+            self.cv_img = cv2.imdecode(np.fromfile(file_name, dtype=np.uint8), cv2.IMREAD_COLOR)
+            self.qpixmap = QPixmap(file_name)
+            self.pixmap_item.setPixmap(self.qpixmap)
+            
+            self.points = self.detect_corners()
+            
+            radius = max(10, min(self.qpixmap.width(), self.qpixmap.height()) * 0.02)
+            for i, pt in enumerate(self.points):
+                if i < len(self.handles):
+                    self.handles[i].setPos(pt[0], pt[1])
+                    self.handles[i].setRect(-radius, -radius, radius * 2, radius * 2)
+            
+            self.update_polygon()
+            self.view.fitInView(self.pixmap_item, Qt.KeepAspectRatio)
+
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -255,6 +288,7 @@ class PerspectiveCropDialog(QDialog):
                 [self.handles[3].pos().x(), self.handles[3].pos().y()]
             ], dtype="float32")
             
+            self.final_points = rect.tolist()
             (tl, tr, br, bl) = rect
             widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
             widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
@@ -285,10 +319,101 @@ class PerspectiveCropDialog(QDialog):
             self.cropped_pixmap = QPixmap.fromImage(qimg.copy())
         super().accept()
 
+class PdfImportDialog(QDialog):
+    def __init__(self, pdf_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("នាំចូលឯកសារ PDF / Import PDF")
+        self.pdf_path = pdf_path
+        self.temp_image_path = None
+        
+        try:
+            import fitz
+            self.doc = fitz.open(pdf_path)
+            self.total_pages = self.doc.page_count
+        except Exception as e:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"មិនអាចបើកឯកសារ PDF បានទេ:\n{e}")
+            self.reject()
+            return
+            
+        self.layout = QVBoxLayout(self)
+        
+        lbl_info = QLabel("<b>ជ្រើសរើសទំព័រ និងទំហំរូបភាពពី PDF</b>")
+        lbl_info.setStyleSheet("color: #333; padding: 5px; background: #e0f2fe; border-radius: 4px;")
+        self.layout.addWidget(lbl_info)
+        
+        from PyQt5.QtWidgets import QFormLayout, QSpinBox, QComboBox
+        form_layout = QFormLayout()
+        
+        self.spin_page = QSpinBox()
+        self.spin_page.setRange(1, self.total_pages)
+        self.spin_page.setValue(1)
+        form_layout.addRow("ទំព័រទី / Page:", self.spin_page)
+        
+        self.combo_res = QComboBox()
+        self.combo_res.addItems([
+            "Determine automatically",
+            "72 pixels/inch",
+            "96 pixels/inch",
+            "150 pixels/inch",
+            "300 pixels/inch",
+            "600 pixels/inch",
+            "1200 pixels/inch",
+            "2400 pixels/inch"
+        ])
+        # Default to 300 pixels/inch (index 4)
+        self.combo_res.setCurrentIndex(4)
+        form_layout.addRow("កម្រិតច្បាស់ / Resolution:", self.combo_res)
+        
+        self.layout.addLayout(form_layout)
+        
+        btn_layout = QHBoxLayout()
+        btn_accept = QPushButton("យល់ព្រម / Accept")
+        btn_accept.setStyleSheet("background-color: #2b52ff; color: white; padding: 10px; font-weight: bold; border-radius: 5px;")
+        btn_accept.clicked.connect(self.process_pdf)
+        
+        btn_cancel = QPushButton("បោះបង់ / Cancel")
+        btn_cancel.setStyleSheet("padding: 10px; border-radius: 5px;")
+        btn_cancel.clicked.connect(self.reject)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_accept)
+        self.layout.addLayout(btn_layout)
+        self.resize(400, 200)
+        
+    def process_pdf(self):
+        try:
+            import fitz
+            import tempfile
+            import os
+            
+            page_num = self.spin_page.value() - 1
+            res_text = self.combo_res.currentText()
+            
+            if "Determine automatically" in res_text:
+                dpi = 300
+            else:
+                dpi = int(res_text.split(" ")[0])
+                
+            page = self.doc[page_num]
+            pix = page.get_pixmap(dpi=dpi)
+            
+            fd, temp_path = tempfile.mkstemp(suffix=".png")
+            os.close(fd)
+            
+            pix.save(temp_path)
+            self.temp_image_path = temp_path
+            self.accept()
+        except Exception as e:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"មិនអាចបំប្លែង PDF ទៅជារូបភាពបានទេ:\n{e}")
+
 
 class PreviewWidget(QWidget):
     """ Custom Widget សម្រាប់គូរទិដ្ឋភាពក្រដាស និងក្រឡារូបថត (Live Print Preview) """
     selectionChanged = pyqtSignal()
+    itemDoubleClicked = pyqtSignal(dict)
 
     def __init__(self):
         super().__init__()
@@ -573,81 +698,99 @@ class PreviewWidget(QWidget):
     def center_horizontally(self):
         """ តម្រឹមរូបភាពកណ្តាលតាមផ្ដេក (Center Horizontally) ធៀបនឹងក្រដាស និង Margin """
         selected = [p for p in self.photo_positions if p.get('selected')]
-        if not selected:
-            selected = self.photo_positions # បើមិនមាន Select ទេ គឺរាប់ទាំងអស់
-        if not selected: return
-        
-        min_x = min(p['x'] for p in selected)
-        max_right = max(p['x'] + p['w'] for p in selected)
-        group_width = max_right - min_x
-        
-        # គណនាចំណុចកណ្តាលនៃក្រដាស ដោយគិត Margin
-        avail_width = self.paper_w - self.margin_left - self.margin_right
-        paper_center_x = self.margin_left + avail_width / 2.0
-        
-        group_center_x = min_x + group_width / 2.0
-        shift_x = paper_center_x - group_center_x
-        
-        for p in selected:
-            p['x'] += shift_x
+        if len(selected) > 1:
+            min_x = min(p['x'] for p in selected)
+            max_right = max(p['x'] + p['w'] for p in selected)
+            group_center_x = min_x + (max_right - min_x) / 2.0
+            for p in selected:
+                p_center = p['x'] + p['w']/2.0
+                p['x'] += group_center_x - p_center
+        else:
+            target_group = selected if selected else self.photo_positions
+            if not target_group: return
+            min_x = min(p['x'] for p in target_group)
+            max_right = max(p['x'] + p['w'] for p in target_group)
+            group_width = max_right - min_x
+            avail_width = self.paper_w - self.margin_left - self.margin_right
+            paper_center_x = self.margin_left + avail_width / 2.0
+            group_center_x = min_x + group_width / 2.0
+            shift_x = paper_center_x - group_center_x
+            for p in target_group: p['x'] += shift_x
         self.update()
 
     def center_vertically(self):
         """ តម្រឹមរូបភាពកណ្តាលតាមបញ្ឈរ (Center Vertically) ធៀបនឹងក្រដាស និង Margin """
         selected = [p for p in self.photo_positions if p.get('selected')]
-        if not selected:
-            selected = self.photo_positions # បើមិនមាន Select ទេ គឺរាប់ទាំងអស់
-        if not selected: return
-        
-        min_y = min(p['y'] for p in selected)
-        max_bottom = max(p['y'] + p['h'] for p in selected)
-        group_height = max_bottom - min_y
-        
-        # គណនាចំណុចកណ្តាលនៃក្រដាស ដោយគិត Margin
-        avail_height = self.paper_h - self.margin_top - self.margin_bottom
-        paper_center_y = self.margin_top + avail_height / 2.0
-        
-        group_center_y = min_y + group_height / 2.0
-        shift_y = paper_center_y - group_center_y
-        
-        for p in selected:
-            p['y'] += shift_y
+        if len(selected) > 1:
+            min_y = min(p['y'] for p in selected)
+            max_bottom = max(p['y'] + p['h'] for p in selected)
+            group_center_y = min_y + (max_bottom - min_y) / 2.0
+            for p in selected:
+                p_center = p['y'] + p['h']/2.0
+                p['y'] += group_center_y - p_center
+        else:
+            target_group = selected if selected else self.photo_positions
+            if not target_group: return
+            min_y = min(p['y'] for p in target_group)
+            max_bottom = max(p['y'] + p['h'] for p in target_group)
+            group_height = max_bottom - min_y
+            avail_height = self.paper_h - self.margin_top - self.margin_bottom
+            paper_center_y = self.margin_top + avail_height / 2.0
+            group_center_y = min_y + group_height / 2.0
+            shift_y = paper_center_y - group_center_y
+            for p in target_group: p['y'] += shift_y
         self.update()
 
     def align_top(self):
         selected = [p for p in self.photo_positions if p.get('selected')]
-        if not selected: selected = self.photo_positions
-        if not selected: return
-        min_y = min(p['y'] for p in selected)
-        shift_y = self.margin_top - min_y
-        for p in selected: p['y'] += shift_y
+        if len(selected) > 1:
+            min_y = min(p['y'] for p in selected)
+            for p in selected: p['y'] = min_y
+        else:
+            target_group = selected if selected else self.photo_positions
+            if not target_group: return
+            min_y = min(p['y'] for p in target_group)
+            shift_y = self.margin_top - min_y
+            for p in target_group: p['y'] += shift_y
         self.update()
 
     def align_bottom(self):
         selected = [p for p in self.photo_positions if p.get('selected')]
-        if not selected: selected = self.photo_positions
-        if not selected: return
-        max_bottom = max(p['y'] + p['h'] for p in selected)
-        shift_y = (self.paper_h - self.margin_bottom) - max_bottom
-        for p in selected: p['y'] += shift_y
+        if len(selected) > 1:
+            max_bottom = max(p['y'] + p['h'] for p in selected)
+            for p in selected: p['y'] = max_bottom - p['h']
+        else:
+            target_group = selected if selected else self.photo_positions
+            if not target_group: return
+            max_bottom = max(p['y'] + p['h'] for p in target_group)
+            shift_y = (self.paper_h - self.margin_bottom) - max_bottom
+            for p in target_group: p['y'] += shift_y
         self.update()
 
     def align_left(self):
         selected = [p for p in self.photo_positions if p.get('selected')]
-        if not selected: selected = self.photo_positions
-        if not selected: return
-        min_x = min(p['x'] for p in selected)
-        shift_x = self.margin_left - min_x
-        for p in selected: p['x'] += shift_x
+        if len(selected) > 1:
+            min_x = min(p['x'] for p in selected)
+            for p in selected: p['x'] = min_x
+        else:
+            target_group = selected if selected else self.photo_positions
+            if not target_group: return
+            min_x = min(p['x'] for p in target_group)
+            shift_x = self.margin_left - min_x
+            for p in target_group: p['x'] += shift_x
         self.update()
 
     def align_right(self):
         selected = [p for p in self.photo_positions if p.get('selected')]
-        if not selected: selected = self.photo_positions
-        if not selected: return
-        max_right = max(p['x'] + p['w'] for p in selected)
-        shift_x = (self.paper_w - self.margin_right) - max_right
-        for p in selected: p['x'] += shift_x
+        if len(selected) > 1:
+            max_right = max(p['x'] + p['w'] for p in selected)
+            for p in selected: p['x'] = max_right - p['w']
+        else:
+            target_group = selected if selected else self.photo_positions
+            if not target_group: return
+            max_right = max(p['x'] + p['w'] for p in target_group)
+            shift_x = (self.paper_w - self.margin_right) - max_right
+            for p in target_group: p['x'] += shift_x
         self.update()
 
     def paintEvent(self, event):
@@ -948,6 +1091,23 @@ class PreviewWidget(QWidget):
                 self.selection_rect = None # លុបចតុកោណកែងដែលបានគូរ
                 self.selectionChanged.emit()
                 self.update()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            scale = self.paper_width_px / self.paper_w if self.paper_w > 0 else 1        
+            click_x = event.x()
+            click_y = event.y()
+            for i in range(len(self.photo_positions)-1, -1, -1):
+                pos = self.photo_positions[i]
+                cell_w = pos.get('w', self.photo_w) * scale
+                cell_h = pos.get('h', self.photo_h) * scale
+                cx = self.paper_x_px + pos['x'] * scale
+                cy = self.paper_y_px + pos['y'] * scale
+                rect = QRectF(cx, cy, cell_w, cell_h)
+                
+                if rect.contains(click_x, click_y):
+                    self.itemDoubleClicked.emit(pos)
+                    break
             return
             
         if event.button() == Qt.LeftButton:
@@ -1546,6 +1706,7 @@ class OCRWorker(QThread):
 class PhotoPrintApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setAcceptDrops(True)
         self.setWindowTitle("Fast Print Text Photo")
         self.default_image_pixmap = None # Added default image pixmap
         from PyQt5.QtCore import QSettings
@@ -1965,13 +2126,13 @@ class PhotoPrintApp(QMainWindow):
         
         grid_rc_layout = QGridLayout()
         grid_rc_layout.addWidget(QLabel("ជួរឈរ (Columns):"), 0, 0)
-        self.sb_grid_cols = QSpinBox(); self.sb_grid_cols.setRange(1, 100); self.sb_grid_cols.setValue(3)
+        self.sb_grid_cols = QSpinBox(); self.sb_grid_cols.setRange(1, 100); self.sb_grid_cols.setValue(1)
         self.sb_grid_cols.valueChanged.connect(self.calculate_layout)
         self.sb_grid_cols.setEnabled(False)
         grid_rc_layout.addWidget(self.sb_grid_cols, 0, 1)
         
         grid_rc_layout.addWidget(QLabel("ជួរដេក (Rows):"), 0, 2)
-        self.sb_grid_rows = QSpinBox(); self.sb_grid_rows.setRange(1, 100); self.sb_grid_rows.setValue(4)
+        self.sb_grid_rows = QSpinBox(); self.sb_grid_rows.setRange(1, 100); self.sb_grid_rows.setValue(1)
         self.sb_grid_rows.valueChanged.connect(self.calculate_layout)
         self.sb_grid_rows.setEnabled(False)
         grid_rc_layout.addWidget(self.sb_grid_rows, 0, 3)
@@ -2566,9 +2727,8 @@ class PhotoPrintApp(QMainWindow):
             self.settings.setValue("gemini_api_key", api_key.strip())
             QMessageBox.information(self, "ជោគជ័យ / Success", "API Key ត្រូវបានកែប្រែដោយជោគជ័យ! / API Key has been updated!")
 
-    def extract_text_from_image(self):
-        from PyQt5.QtWidgets import QInputDialog, QLineEdit, QFileDialog, QMessageBox
-        
+    def process_ocr_from_file(self, file_name):
+        from PyQt5.QtWidgets import QInputDialog, QLineEdit, QMessageBox
         api_key = self.settings.value("gemini_api_key", "")
         if not api_key:
             api_key, ok = QInputDialog.getText(
@@ -2582,26 +2742,35 @@ class PhotoPrintApp(QMainWindow):
                 self.settings.setValue("gemini_api_key", api_key)
             else:
                 return
-                
+        
+        dialog = ImageCropDialog(file_name, self)
+        if dialog.exec_():
+            final_image_path = dialog.get_cropped_image()
+            
+            self.btn_ai_ocr.setText("កំពុងទាញអត្ថបទ... / Processing...")
+            self.btn_ai_ocr.setEnabled(False)
+            
+            selected_model = self.cb_ai_model.currentText()
+            self.ocr_worker = OCRWorker(final_image_path, api_key, selected_model)
+            self.ocr_worker.finished_signal.connect(self.on_ocr_success)
+            self.ocr_worker.error_signal.connect(self.on_ocr_error)
+            self.ocr_worker.start()
+
+    def extract_text_from_image(self):
+        from PyQt5.QtWidgets import QFileDialog, QDialog
         file_name, _ = QFileDialog.getOpenFileName(
             self,
-            "ជ្រើសរើសរូបភាព / Select Image",
+            "ជ្រើសរើសរូបភាព ឬ PDF / Select Image or PDF",
             "",
-            "Images (*.png *.jpg *.jpeg *.bmp)"
+            "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)"
         )
         if file_name:
-            dialog = ImageCropDialog(file_name, self)
-            if dialog.exec_():
-                final_image_path = dialog.get_cropped_image()
-                
-                self.btn_ai_ocr.setText("កំពុងទាញអត្ថបទ... / Processing...")
-                self.btn_ai_ocr.setEnabled(False)
-                
-                selected_model = self.cb_ai_model.currentText()
-                self.ocr_worker = OCRWorker(final_image_path, api_key, selected_model)
-                self.ocr_worker.finished_signal.connect(self.on_ocr_success)
-                self.ocr_worker.error_signal.connect(self.on_ocr_error)
-                self.ocr_worker.start()
+            if file_name.lower().endswith('.pdf'):
+                dialog = PdfImportDialog(file_name, self)
+                if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
+                    self.process_ocr_from_file(dialog.temp_image_path)
+            else:
+                self.process_ocr_from_file(file_name)
 
     def on_ocr_success(self, text):
         self.btn_ai_ocr.setText("ទាញអត្ថបទពីរូបភាព (AI) / Extract Text from Image")
@@ -2884,20 +3053,33 @@ class PhotoPrintApp(QMainWindow):
 
     def load_image(self):
         options = QFileDialog.Options()
-        file_names, _ = QFileDialog.getOpenFileNames(self, "ជ្រើសរើសរូបភាព / Choose Photos", "", "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
+        file_names, _ = QFileDialog.getOpenFileNames(self, "ជ្រើសរើសរូបភាព ឬ PDF / Choose Photos or PDF", "", "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)", options=options)
         
         if not file_names:
             return
 
-        self.loaded_images = file_names
+        valid_files = []
+        from PyQt5.QtWidgets import QDialog
+        for f in file_names:
+            if f.lower().endswith('.pdf'):
+                dialog = PdfImportDialog(f, self)
+                if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
+                    valid_files.append(dialog.temp_image_path)
+            else:
+                valid_files.append(f)
+
+        if not valid_files:
+            return
+
+        self.loaded_images = valid_files
         self.btn_clear.setVisible(True)
         
-        if len(file_names) == 1:
-            self.default_image_pixmap = QPixmap(file_names[0])
-            self.lbl_image_status.setText(f"<i>បានជ្រើសរើស: {file_names[0].split('/')[-1]}</i>")
+        if len(valid_files) == 1:
+            self.default_image_pixmap = QPixmap(valid_files[0])
+            self.lbl_image_status.setText(f"<i>បានជ្រើសរើស: {valid_files[0].split('/')[-1]}</i>")
         else:
             self.default_image_pixmap = None
-            self.lbl_image_status.setText(f"<i>បានជ្រើសរើសរូបភាពចំនួន {len(file_names)} ឯកសារ</i>")
+            self.lbl_image_status.setText(f"<i>បានជ្រើសរើសរូបភាពចំនួន {len(valid_files)} ឯកសារ</i>")
             
         self.calculate_layout()
 
@@ -3487,6 +3669,10 @@ class PhotoPrintApp(QMainWindow):
         self.lbl_info_back = QLabel("")
         self.lbl_info_back.setStyleSheet("color: gray; font-size: 11px;")
         
+        self.btn_swap_id = QPushButton("ឆ្លាស់ទីតាំងកាត / Swap Cards")
+        self.btn_swap_id.setStyleSheet("background-color: #f59e0b; color: white; padding: 10px; border-radius: 5px;")
+        self.btn_swap_id.clicked.connect(self.swap_id_cards)
+        
         self.btn_clear_id = QPushButton("លុបរូបកាត / Clear ID Cards")
         self.btn_clear_id.setStyleSheet("background-color: #e74c3c; color: white; padding: 10px; border-radius: 5px;")
         self.btn_clear_id.clicked.connect(self.clear_id_cards)
@@ -3508,6 +3694,7 @@ class PhotoPrintApp(QMainWindow):
         gb_id_layout.addWidget(self.lbl_info_front)
         gb_id_layout.addWidget(self.btn_load_back)
         gb_id_layout.addWidget(self.lbl_info_back)
+        gb_id_layout.addWidget(self.btn_swap_id)
         gb_id_layout.addWidget(QLabel("ប្រភេទពណ៌ / Color Filter:"))
         gb_id_layout.addWidget(self.cb_id_filter)
         gb_id_layout.addWidget(self.chk_id_ai)
@@ -3642,6 +3829,7 @@ class PhotoPrintApp(QMainWindow):
         self.id_preview = PreviewWidget()
         self.id_preview.is_manual = True
         self.id_preview.photo_positions = []
+        self.id_preview.itemDoubleClicked.connect(self.on_id_preview_double_clicked)
         
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -3761,6 +3949,8 @@ class PhotoPrintApp(QMainWindow):
                 res = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
             elif idx == 2:
                 gray = cv2.cvtColor(base_img, cv2.COLOR_RGB2GRAY)
+                # បង្កើនពន្លឺ និងកម្រិតភាពច្បាស់បន្តិចដើម្បីឱ្យផ្ទៃខាងក្រោយភ្លឺជាងមុន
+                gray = cv2.convertScaleAbs(gray, alpha=1.1, beta=5)
                 res = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
             elif idx == 3:
                 gray = cv2.cvtColor(base_img, cv2.COLOR_RGB2GRAY)
@@ -3831,11 +4021,21 @@ class PhotoPrintApp(QMainWindow):
     def load_id_front(self):
         from PyQt5.QtWidgets import QDialog
         options = QFileDialog.Options()
-        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបកាតមុខ / Select Front ID", "", "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
+        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបកាតមុខ ឬ PDF / Select Front ID or PDF", "", "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)", options=options)
         if file_name:
+            if file_name.lower().endswith('.pdf'):
+                dialog = PdfImportDialog(file_name, self)
+                if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
+                    file_name = dialog.temp_image_path
+                else:
+                    return
+            
+            self.id_front_file_name = file_name
+            self.id_front_points = None
             dialog = PerspectiveCropDialog(file_name, self)
             if dialog.exec_() == QDialog.Accepted and dialog.cropped_pixmap:
                 self.id_front_cv_img = dialog.cropped_cv_img
+                self.id_front_points = getattr(dialog, 'final_points', None)
             else:
                 img = cv2.imdecode(np.fromfile(file_name, dtype=np.uint8), cv2.IMREAD_COLOR)
                 self.id_front_cv_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
@@ -3844,22 +4044,65 @@ class PhotoPrintApp(QMainWindow):
     def load_id_back(self):
         from PyQt5.QtWidgets import QDialog
         options = QFileDialog.Options()
-        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបកាតក្រោយ / Select Back ID", "", "Images (*.png *.jpg *.jpeg *.bmp)", options=options)
+        file_name, _ = QFileDialog.getOpenFileName(self, "ជ្រើសរើសរូបកាតក្រោយ ឬ PDF / Select Back ID or PDF", "", "Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)", options=options)
         if file_name:
+            if file_name.lower().endswith('.pdf'):
+                dialog = PdfImportDialog(file_name, self)
+                if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
+                    file_name = dialog.temp_image_path
+                else:
+                    return
+                    
+            self.id_back_file_name = file_name
+            self.id_back_points = None
             dialog = PerspectiveCropDialog(file_name, self)
             if dialog.exec_() == QDialog.Accepted and dialog.cropped_pixmap:
                 self.id_back_cv_img = dialog.cropped_cv_img
+                self.id_back_points = getattr(dialog, 'final_points', None)
             else:
                 img = cv2.imdecode(np.fromfile(file_name, dtype=np.uint8), cv2.IMREAD_COLOR)
                 self.id_back_cv_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
             self.apply_id_filters()
+            
+    def swap_id_cards(self):
+        self.id_front_cv_img, self.id_back_cv_img = self.id_back_cv_img, self.id_front_cv_img
+        
+        f_name = getattr(self, 'id_front_file_name', None)
+        b_name = getattr(self, 'id_back_file_name', None)
+        self.id_front_file_name, self.id_back_file_name = b_name, f_name
+        
+        f_pts = getattr(self, 'id_front_points', None)
+        b_pts = getattr(self, 'id_back_points', None)
+        self.id_front_points, self.id_back_points = b_pts, f_pts
+        
+        self.apply_id_filters()
             
     def clear_id_cards(self):
         self.id_front_cv_img = None
         self.id_back_cv_img = None
         self.id_front_pixmap = None
         self.id_back_pixmap = None
+        self.id_front_file_name = None
+        self.id_back_file_name = None
+        self.id_front_points = None
+        self.id_back_points = None
         self.update_id_preview()
+
+    def on_id_preview_double_clicked(self, pos):
+        label = pos.get('label', '')
+        from PyQt5.QtWidgets import QDialog
+        if label == 'Front' and hasattr(self, 'id_front_file_name') and self.id_front_file_name:
+            dialog = PerspectiveCropDialog(self.id_front_file_name, self, initial_points=getattr(self, 'id_front_points', None))
+            if dialog.exec_() == QDialog.Accepted and dialog.cropped_pixmap:
+                self.id_front_cv_img = dialog.cropped_cv_img
+                self.id_front_points = getattr(dialog, 'final_points', None)
+                self.apply_id_filters()
+        elif label == 'Back' and hasattr(self, 'id_back_file_name') and self.id_back_file_name:
+            dialog = PerspectiveCropDialog(self.id_back_file_name, self, initial_points=getattr(self, 'id_back_points', None))
+            if dialog.exec_() == QDialog.Accepted and dialog.cropped_pixmap:
+                self.id_back_cv_img = dialog.cropped_cv_img
+                self.id_back_points = getattr(dialog, 'final_points', None)
+                self.apply_id_filters()
 
     def update_id_preview(self):
         # Update Paper Size
@@ -4004,6 +4247,86 @@ class PhotoPrintApp(QMainWindow):
                 subprocess.Popen([self.foxit_path, file_name])
             except Exception as e:
                 QMessageBox.critical(self, "កំហុស / Error", f"មិនអាចបើកកម្មវិធី Foxit PDF បានទេ:\n{str(e)}")
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+        file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
+        
+        valid_files = []
+        from PyQt5.QtWidgets import QDialog
+        for f in file_names:
+            if f.lower().endswith('.pdf'):
+                dialog = PdfImportDialog(f, self)
+                if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
+                    valid_files.append(dialog.temp_image_path)
+            elif any(f.lower().endswith(e) for e in ['.png', '.jpg', '.jpeg', '.bmp']):
+                valid_files.append(f)
+        
+        if not valid_files:
+            return
+            
+        current_tab = self.tabs.currentIndex()
+        
+        if current_tab == 0:
+            self.loaded_images = valid_files
+            self.btn_clear.setVisible(True)
+            if len(valid_files) == 1:
+                self.default_image_pixmap = QPixmap(valid_files[0])
+                self.lbl_image_status.setText(f"<i>បានជ្រើសរើស: {valid_files[0].split('/')[-1]}</i>")
+            else:
+                self.default_image_pixmap = None
+                self.lbl_image_status.setText(f"<i>បានជ្រើសរើសរូបភាពចំនួន {len(valid_files)} ឯកសារ</i>")
+            self.calculate_layout()
+            
+        elif current_tab == 1:
+            if len(valid_files) >= 1:
+                self.process_ocr_from_file(valid_files[0])
+            
+        elif current_tab == 2:
+            from PyQt5.QtWidgets import QDialog
+            for i, fpath in enumerate(valid_files):
+                if len(valid_files) >= 2:
+                    target = 'front' if i == 0 else 'back'
+                else:
+                    if self.id_front_cv_img is None:
+                        target = 'front'
+                    elif self.id_back_cv_img is None:
+                        target = 'back'
+                    else:
+                        target = 'front'
+                
+                if i > 1:
+                    break
+
+                dialog = PerspectiveCropDialog(fpath, self)
+                is_accepted = dialog.exec_() == QDialog.Accepted
+                
+                if target == 'front':
+                    self.id_front_file_name = fpath
+                    self.id_front_points = None
+                    if is_accepted and dialog.cropped_pixmap:
+                        self.id_front_cv_img = dialog.cropped_cv_img
+                        self.id_front_points = getattr(dialog, 'final_points', None)
+                    else:
+                        img = cv2.imdecode(np.fromfile(fpath, dtype=np.uint8), cv2.IMREAD_COLOR)
+                        self.id_front_cv_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
+                else:
+                    self.id_back_file_name = fpath
+                    self.id_back_points = None
+                    if is_accepted and dialog.cropped_pixmap:
+                        self.id_back_cv_img = dialog.cropped_cv_img
+                        self.id_back_points = getattr(dialog, 'final_points', None)
+                    else:
+                        img = cv2.imdecode(np.fromfile(fpath, dtype=np.uint8), cv2.IMREAD_COLOR)
+                        self.id_back_cv_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
+                        
+            self.apply_id_filters()
 
 if __name__ == '__main__':
     import ctypes
