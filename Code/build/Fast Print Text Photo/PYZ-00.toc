@@ -1,5 +1,4 @@
-('E:\\Code\\Photo Print\\Photo-Print-App\\Code\\build\\Fast Print Text '
- 'Photo\\PYZ-00.pyz',
+('E:\\Code\\Photo-Print-App\\Code\\build\\Fast Print Text Photo\\PYZ-00.pyz',
  [('PIL',
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\PIL\\__init__.py',
@@ -1343,6 +1342,10 @@
   ('fileinput',
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\fileinput.py',
+   'PYMODULE'),
+  ('fitz',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\fitz\\__init__.py',
    'PYMODULE'),
   ('fnmatch',
    'C:\\Users\\One '
@@ -3145,6 +3148,10 @@
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\numpy\\core\\_utils.py',
    'PYMODULE'),
+  ('numpy.core.multiarray',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\numpy\\core\\multiarray.py',
+   'PYMODULE'),
   ('numpy.ctypeslib',
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\numpy\\ctypeslib\\__init__.py',
@@ -4168,6 +4175,42 @@
   ('pydoc_data.topics',
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\pydoc_data\\topics.py',
+   'PYMODULE'),
+  ('pymupdf',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\__init__.py',
+   'PYMODULE'),
+  ('pymupdf._apply_pages',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\_apply_pages.py',
+   'PYMODULE'),
+  ('pymupdf._build',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\_build.py',
+   'PYMODULE'),
+  ('pymupdf._wxcolors',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\_wxcolors.py',
+   'PYMODULE'),
+  ('pymupdf.extra',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\extra.py',
+   'PYMODULE'),
+  ('pymupdf.mupdf',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\mupdf.py',
+   'PYMODULE'),
+  ('pymupdf.pymupdf',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\pymupdf.py',
+   'PYMODULE'),
+  ('pymupdf.table',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\table.py',
+   'PYMODULE'),
+  ('pymupdf.utils',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\utils.py',
    'PYMODULE'),
   ('queue',
    'C:\\Users\\One '

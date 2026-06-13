@@ -2,27 +2,12 @@
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\81d243bd2c585b0f4821__mypyc.cp314-win_amd64.pyd',
    'EXTENSION'),
-  ('Assets\\TEXT.jpg',
-   'e:\\Code\\Photo Print\\Photo-Print-App\\Assets\\TEXT.jpg',
-   'DATA'),
-  ('Assets\\Taskbar Icon .png',
-   'e:\\Code\\Photo Print\\Photo-Print-App\\Assets\\Taskbar Icon .png',
-   'DATA'),
-  ('Assets\\Thumbs.db',
-   'e:\\Code\\Photo Print\\Photo-Print-App\\Assets\\Thumbs.db',
-   'DATA'),
-  ('Assets\\UI .png',
-   'e:\\Code\\Photo Print\\Photo-Print-App\\Assets\\UI .png',
-   'DATA'),
-  ('Assets\\UI.ico',
-   'e:\\Code\\Photo Print\\Photo-Print-App\\Assets\\UI.ico',
-   'DATA'),
-  ('Assets\\icon.png',
-   'e:\\Code\\Photo Print\\Photo-Print-App\\Assets\\icon.png',
-   'DATA'),
+  ('Assets\\Icon.ico', 'E:\\Code\\Photo-Print-App\\Assets\\Icon.ico', 'DATA'),
+  ('Assets\\Icon.png', 'E:\\Code\\Photo-Print-App\\Assets\\Icon.png', 'DATA'),
+  ('Assets\\UI.ico', 'E:\\Code\\Photo-Print-App\\Assets\\UI.ico', 'DATA'),
   ('Fast Print Text Photo.exe',
-   'E:\\Code\\Photo Print\\Photo-Print-App\\Code\\build\\Fast Print Text '
-   'Photo\\Fast Print Text Photo.exe',
+   'E:\\Code\\Photo-Print-App\\Code\\build\\Fast Print Text Photo\\Fast Print '
+   'Text Photo.exe',
    'EXECUTABLE'),
   ('PIL\\_avif.cp314-win_amd64.pyd',
    'C:\\Users\\One '
@@ -581,7 +566,7 @@
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\DLLs\\_zstd.pyd',
    'EXTENSION'),
   ('base_library.zip',
-   'E:\\Code\\Photo Print\\Photo-Print-App\\Code\\build\\Fast Print Text '
+   'E:\\Code\\Photo-Print-App\\Code\\build\\Fast Print Text '
    'Photo\\base_library.zip',
    'DATA'),
   ('certifi\\cacert.pem',
@@ -640,6 +625,62 @@
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cryptography\\hazmat\\bindings\\_rust.pyd',
    'EXTENSION'),
+  ('cv2\\__init__.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\__init__.py',
+   'DATA'),
+  ('cv2\\config-3.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\config-3.py',
+   'DATA'),
+  ('cv2\\config.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\config.py',
+   'DATA'),
+  ('cv2\\cv2.pyd',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\cv2.pyd',
+   'EXTENSION'),
+  ('cv2\\data\\__init__.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\data\\__init__.py',
+   'DATA'),
+  ('cv2\\gapi\\__init__.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\gapi\\__init__.py',
+   'DATA'),
+  ('cv2\\load_config_py3.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\load_config_py3.py',
+   'DATA'),
+  ('cv2\\mat_wrapper\\__init__.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\mat_wrapper\\__init__.py',
+   'DATA'),
+  ('cv2\\misc\\__init__.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\misc\\__init__.py',
+   'DATA'),
+  ('cv2\\misc\\version.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\misc\\version.py',
+   'DATA'),
+  ('cv2\\opencv_videoio_ffmpeg4130_64.dll',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\opencv_videoio_ffmpeg4130_64.dll',
+   'BINARY'),
+  ('cv2\\typing\\__init__.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\typing\\__init__.py',
+   'DATA'),
+  ('cv2\\utils\\__init__.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\utils\\__init__.py',
+   'DATA'),
+  ('cv2\\version.py',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\cv2\\version.py',
+   'DATA'),
   ('libcrypto-3.dll',
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\DLLs\\libcrypto-3.dll',
@@ -832,6 +873,18 @@
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\DLLs\\pyexpat.pyd',
    'EXTENSION'),
+  ('pymupdf\\_extra.pyd',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\_extra.pyd',
+   'EXTENSION'),
+  ('pymupdf\\_mupdf.pyd',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\_mupdf.pyd',
+   'EXTENSION'),
+  ('pymupdf\\mupdfcpp64.dll',
+   'C:\\Users\\One '
+   'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\pymupdf\\mupdfcpp64.dll',
+   'BINARY'),
   ('python3.dll',
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\python3.dll',

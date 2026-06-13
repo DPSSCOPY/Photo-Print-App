@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('e:\\Code\\Photo Print\\Photo-Print-App\\Assets', 'Assets')],
+    datas=[('..\\Assets', 'Assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -32,7 +32,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['e:\\Code\\Photo Print\\Photo-Print-App\\Assets\\icon.png'],
+    icon=['..\\Assets\\Icon.ico'],
 )
 coll = COLLECT(
     exe,

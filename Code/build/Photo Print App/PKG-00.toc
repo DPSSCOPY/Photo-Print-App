@@ -1,5 +1,4 @@
-('E:\\Code\\Photo Print\\Photo-Print-App\\Code\\build\\Photo Print App\\Photo '
- 'Print App.pkg',
+('E:\\Code\\Photo-Print-App\\Code\\build\\Photo Print App\\Photo Print App.pkg',
  {'BINARY': True,
   'DATA': True,
   'EXECUTABLE': True,
@@ -11,27 +10,26 @@
   'SYMLINK': False},
  [('pyi-contents-directory _internal', '', 'OPTION'),
   ('PYZ-00.pyz',
-   'E:\\Code\\Photo Print\\Photo-Print-App\\Code\\build\\Photo Print '
-   'App\\PYZ-00.pyz',
+   'E:\\Code\\Photo-Print-App\\Code\\build\\Photo Print App\\PYZ-00.pyz',
    'PYZ'),
   ('struct',
-   'E:\\Code\\Photo Print\\Photo-Print-App\\Code\\build\\Photo Print '
+   'E:\\Code\\Photo-Print-App\\Code\\build\\Photo Print '
    'App\\localpycs\\struct.pyc',
    'PYMODULE'),
   ('pyimod01_archive',
-   'E:\\Code\\Photo Print\\Photo-Print-App\\Code\\build\\Photo Print '
+   'E:\\Code\\Photo-Print-App\\Code\\build\\Photo Print '
    'App\\localpycs\\pyimod01_archive.pyc',
    'PYMODULE'),
   ('pyimod02_importers',
-   'E:\\Code\\Photo Print\\Photo-Print-App\\Code\\build\\Photo Print '
+   'E:\\Code\\Photo-Print-App\\Code\\build\\Photo Print '
    'App\\localpycs\\pyimod02_importers.pyc',
    'PYMODULE'),
   ('pyimod03_ctypes',
-   'E:\\Code\\Photo Print\\Photo-Print-App\\Code\\build\\Photo Print '
+   'E:\\Code\\Photo-Print-App\\Code\\build\\Photo Print '
    'App\\localpycs\\pyimod03_ctypes.pyc',
    'PYMODULE'),
   ('pyimod04_pywin32',
-   'E:\\Code\\Photo Print\\Photo-Print-App\\Code\\build\\Photo Print '
+   'E:\\Code\\Photo-Print-App\\Code\\build\\Photo Print '
    'App\\localpycs\\pyimod04_pywin32.pyc',
    'PYMODULE'),
   ('pyiboot01_bootstrap',
@@ -62,9 +60,7 @@
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks\\pyi_rth_pyqt5.py',
    'PYSOURCE'),
-  ('main',
-   'E:\\Code\\Photo Print\\Photo-Print-App\\Code\\main.py',
-   'PYSOURCE')],
+  ('main', 'E:\\Code\\Photo-Print-App\\Code\\main.py', 'PYSOURCE')],
  'python314.dll',
  True,
  False,
