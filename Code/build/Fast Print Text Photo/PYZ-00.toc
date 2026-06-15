@@ -5076,6 +5076,7 @@
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\unittest\\util.py',
    'PYMODULE'),
+  ('updater', 'E:\\Code\\Photo-Print-App\\Code\\updater.py', 'PYMODULE'),
   ('urllib',
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\urllib\\__init__.py',

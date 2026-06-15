@@ -2,9 +2,6 @@
    'C:\\Users\\One '
    'Gears\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\81d243bd2c585b0f4821__mypyc.cp314-win_amd64.pyd',
    'EXTENSION'),
-  ('Assets\\Icon.ico', 'E:\\Code\\Photo-Print-App\\Assets\\Icon.ico', 'DATA'),
-  ('Assets\\Icon.png', 'E:\\Code\\Photo-Print-App\\Assets\\Icon.png', 'DATA'),
-  ('Assets\\UI.ico', 'E:\\Code\\Photo-Print-App\\Assets\\UI.ico', 'DATA'),
   ('Fast Print Text Photo.exe',
    'E:\\Code\\Photo-Print-App\\Code\\build\\Fast Print Text Photo\\Fast Print '
    'Text Photo.exe',

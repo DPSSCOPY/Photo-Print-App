@@ -9,6 +9,7 @@ from PyQt5.QtCore import Qt, QRectF, pyqtSignal, QPointF, QPoint
 from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPixmap, QTransform, QImage
 import cv2
 import numpy as np
+import updater
 class CornerHandle(QGraphicsEllipseItem):
     def __init__(self, x, y, radius, index, parent=None):
         super().__init__(-radius, -radius, radius * 2, radius * 2, parent)
@@ -1712,6 +1713,9 @@ class PhotoPrintApp(QMainWindow):
         self.resize(1366, 768)
         self.showMaximized()
         self.initUI()
+        
+        # Check for updates automatically in the background
+        updater.check_for_updates(self)
 
     def initUI(self):
         # Main Widget and Layout
@@ -2175,7 +2179,7 @@ class PhotoPrintApp(QMainWindow):
         btn_print.setStyleSheet("background-color: #5850ec; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
         btn_print.clicked.connect(self.import_to_foxit)
         
-        btn_support = QLabel("សរសេរដោយ៖ ដែកូដថ្មី Ver.1.0.4")
+        btn_support = QLabel("សរសេរដោយ៖ ដែកូដថ្មី Ver.1.0.5")
         btn_support.setStyleSheet(" color: green ; padding: 12px; font-weight: bold; border-radius: 5px;")
 
         right_layout.addLayout(h_save_layout)
@@ -2954,13 +2958,13 @@ class PhotoPrintApp(QMainWindow):
             self.btn_next_page.setEnabled(self.current_page_index < total_pages - 1)
 
     def align_selected_left(self):
-        for c in self.preview_canvases: c.align_selected_left()
+        for c in self.preview_canvases: c.align_left()
     def align_selected_top(self):
-        for c in self.preview_canvases: c.align_selected_top()
+        for c in self.preview_canvases: c.align_top()
     def align_selected_right(self):
-        for c in self.preview_canvases: c.align_selected_right()
+        for c in self.preview_canvases: c.align_right()
     def align_selected_bottom(self):
-        for c in self.preview_canvases: c.align_selected_bottom()
+        for c in self.preview_canvases: c.align_bottom()
     def distribute_horizontally(self):
         for c in self.preview_canvases: c.distribute_horizontally()
     def distribute_vertically(self):
@@ -3245,7 +3249,7 @@ class PhotoPrintApp(QMainWindow):
             
         self.calculate_layout()
 
-    def calculate_layout(self):
+    def calculate_layout(self, *args):
         paper_w = self.sb_width.value()
         paper_h = self.sb_height.value()
 
@@ -3813,24 +3817,24 @@ class PhotoPrintApp(QMainWindow):
         gb_margin_layout.addWidget(btn_align_top, 2, 0)
         gb_margin_layout.addWidget(btn_align_bottom, 2, 1)
         
-        self.sb_margin_top = QDoubleSpinBox()
-        self.sb_margin_bottom = QDoubleSpinBox()
-        self.sb_margin_left = QDoubleSpinBox()
-        self.sb_margin_right = QDoubleSpinBox()
+        self.sb_id_margin_top = QDoubleSpinBox()
+        self.sb_id_margin_bottom = QDoubleSpinBox()
+        self.sb_id_margin_left = QDoubleSpinBox()
+        self.sb_id_margin_right = QDoubleSpinBox()
         
-        for sb in [self.sb_margin_top, self.sb_margin_bottom, self.sb_margin_left, self.sb_margin_right]:
+        for sb in [self.sb_id_margin_top, self.sb_id_margin_bottom, self.sb_id_margin_left, self.sb_id_margin_right]:
             sb.setRange(0, 500)
             sb.setValue(10)
             sb.valueChanged.connect(self.update_id_preview)
             
         gb_margin_layout.addWidget(QLabel("គែមលើ (Top):"), 3, 0)
-        gb_margin_layout.addWidget(self.sb_margin_top, 3, 1)
+        gb_margin_layout.addWidget(self.sb_id_margin_top, 3, 1)
         gb_margin_layout.addWidget(QLabel("គែមក្រោម (Bottom):"), 4, 0)
-        gb_margin_layout.addWidget(self.sb_margin_bottom, 4, 1)
+        gb_margin_layout.addWidget(self.sb_id_margin_bottom, 4, 1)
         gb_margin_layout.addWidget(QLabel("គែមឆ្វេង (Left):"), 5, 0)
-        gb_margin_layout.addWidget(self.sb_margin_left, 5, 1)
+        gb_margin_layout.addWidget(self.sb_id_margin_left, 5, 1)
         gb_margin_layout.addWidget(QLabel("គែមស្តាំ (Right):"), 6, 0)
-        gb_margin_layout.addWidget(self.sb_margin_right, 6, 1)
+        gb_margin_layout.addWidget(self.sb_id_margin_right, 6, 1)
         
         gb_margin.setLayout(gb_margin_layout)
         left_layout.addWidget(gb_margin)
@@ -3876,45 +3880,45 @@ class PhotoPrintApp(QMainWindow):
 
     def id_center_h(self):
         self.id_preview.center_horizontally()
-        self.sb_margin_left.blockSignals(True)
-        self.sb_margin_left.setValue(self.id_preview.margin_left)
-        self.sb_margin_left.blockSignals(False)
-        self.sb_margin_right.blockSignals(True)
-        self.sb_margin_right.setValue(self.id_preview.margin_right)
-        self.sb_margin_right.blockSignals(False)
+        self.sb_id_margin_left.blockSignals(True)
+        self.sb_id_margin_left.setValue(self.id_preview.margin_left)
+        self.sb_id_margin_left.blockSignals(False)
+        self.sb_id_margin_right.blockSignals(True)
+        self.sb_id_margin_right.setValue(self.id_preview.margin_right)
+        self.sb_id_margin_right.blockSignals(False)
 
     def id_center_v(self):
         self.id_preview.center_vertically()
-        self.sb_margin_top.blockSignals(True)
-        self.sb_margin_top.setValue(self.id_preview.margin_top)
-        self.sb_margin_top.blockSignals(False)
-        self.sb_margin_bottom.blockSignals(True)
-        self.sb_margin_bottom.setValue(self.id_preview.margin_bottom)
-        self.sb_margin_bottom.blockSignals(False)
+        self.sb_id_margin_top.blockSignals(True)
+        self.sb_id_margin_top.setValue(self.id_preview.margin_top)
+        self.sb_id_margin_top.blockSignals(False)
+        self.sb_id_margin_bottom.blockSignals(True)
+        self.sb_id_margin_bottom.setValue(self.id_preview.margin_bottom)
+        self.sb_id_margin_bottom.blockSignals(False)
 
     def id_align_left(self):
         self.id_preview.align_left()
-        self.sb_margin_left.blockSignals(True)
-        self.sb_margin_left.setValue(self.id_preview.margin_left)
-        self.sb_margin_left.blockSignals(False)
+        self.sb_id_margin_left.blockSignals(True)
+        self.sb_id_margin_left.setValue(self.id_preview.margin_left)
+        self.sb_id_margin_left.blockSignals(False)
 
     def id_align_right(self):
         self.id_preview.align_right()
-        self.sb_margin_right.blockSignals(True)
-        self.sb_margin_right.setValue(self.id_preview.margin_right)
-        self.sb_margin_right.blockSignals(False)
+        self.sb_id_margin_right.blockSignals(True)
+        self.sb_id_margin_right.setValue(self.id_preview.margin_right)
+        self.sb_id_margin_right.blockSignals(False)
 
     def id_align_top(self):
         self.id_preview.align_top()
-        self.sb_margin_top.blockSignals(True)
-        self.sb_margin_top.setValue(self.id_preview.margin_top)
-        self.sb_margin_top.blockSignals(False)
+        self.sb_id_margin_top.blockSignals(True)
+        self.sb_id_margin_top.setValue(self.id_preview.margin_top)
+        self.sb_id_margin_top.blockSignals(False)
 
     def id_align_bottom(self):
         self.id_preview.align_bottom()
-        self.sb_margin_bottom.blockSignals(True)
-        self.sb_margin_bottom.setValue(self.id_preview.margin_bottom)
-        self.sb_margin_bottom.blockSignals(False)
+        self.sb_id_margin_bottom.blockSignals(True)
+        self.sb_id_margin_bottom.setValue(self.id_preview.margin_bottom)
+        self.sb_id_margin_bottom.blockSignals(False)
 
     def apply_id_filters(self, *args):
         idx = self.cb_id_filter.currentIndex()
@@ -4137,10 +4141,10 @@ class PhotoPrintApp(QMainWindow):
         pw, ph = paper_sizes.get(idx, (210.0, 297.0))
         self.id_preview.paper_w = pw
         self.id_preview.paper_h = ph
-        self.id_preview.margin_left = self.sb_margin_left.value()
-        self.id_preview.margin_right = self.sb_margin_right.value()
-        self.id_preview.margin_top = self.sb_margin_top.value()
-        self.id_preview.margin_bottom = self.sb_margin_bottom.value()
+        self.id_preview.margin_left = self.sb_id_margin_left.value()
+        self.id_preview.margin_right = self.sb_id_margin_right.value()
+        self.id_preview.margin_top = self.sb_id_margin_top.value()
+        self.id_preview.margin_bottom = self.sb_id_margin_bottom.value()
         
         self.id_preview.apply_rounded_corners = self.chk_id_rounded.isChecked()
         
