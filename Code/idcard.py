@@ -1,0 +1,2206 @@
+class PhotoPrintApp(QMainWindow):
+
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(True)
+        self.setWindowTitle('Fast Print Text Photo')
+        self.default_image_pixmap = None
+        from PyQt5.QtCore import QSettings
+        self.settings = QSettings('PhotoPrintApp', 'Settings')
+        self.default_pdf_folder = self.settings.value('default_pdf_folder', '')
+        self.foxit_path = self.settings.value('foxit_path', '')
+        self.resize(1366, 768)
+        self.showMaximized()
+        self.initUI()
+        updater.check_for_updates(self)
+
+    def initUI(self):
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        self.tabs = QTabWidget(main_widget)
+        self.tabs.setStyleSheet("\n            QTabBar::tab {\n                padding: 10px 20px;\n                font-weight: normal;\n                font-size: 12px;\n                font-family: 'Khmer OS Battambang', Arial;\n            }\n            QTabBar::tab:selected {\n                background-color: #0084c7;\n                color: white;\n            }\n            QTabBar::tab:!selected {\n                background-color: #e0e0e0;\n                color: black;\n            }\n        ")
+        self.tab1 = QWidget()
+        main_layout = QHBoxLayout(self.tab1)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        from PyQt5.QtWidgets import QScrollArea, QStackedWidget
+        self.preview_canvases = []
+        self.current_page_index = 0
+        self.stacked_widget = QStackedWidget()
+        self.stacked_widget.setStyleSheet('background-color: transparent;')
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet('QScrollArea { background-color: #dbe2e9; border: none; }')
+        self.scroll_area.setWidget(self.stacked_widget)
+        left_panel = QWidget()
+        left_panel.setFixedWidth(320)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setAlignment(Qt.AlignTop)
+        title_lbl = QLabel('<b>បោះពុម្ពរូបថត / Photo Printer</b>')
+        title_lbl.setFont(QFont('Khmer OS Battambang', 12))
+        left_layout.addWidget(title_lbl)
+        gb_photo = QGroupBox('១. ជ្រើសរើសរូបភាព / Choose Photo')
+        gb_photo_layout = QVBoxLayout()
+        h_btn_layout = QHBoxLayout()
+        self.btn_load = QPushButton('បញ្ចូលរូបភាព / Load Image')
+        self.btn_load.setStyleSheet('background-color: #0084c7; color: white; padding: 10px; border-radius: 5px;')
+        self.btn_load.clicked.connect(self.load_image)
+        h_btn_layout.addWidget(self.btn_load)
+        self.btn_clear = QPushButton('✖')
+        self.btn_clear.setToolTip('លុបរូបភាព / Clear Image')
+        self.btn_clear.setFixedSize(38, 38)
+        self.btn_clear.setStyleSheet('background-color: #e74c3c; color: white; border-radius: 5px; font-weight: bold; font-size: 16px;')
+        self.btn_clear.clicked.connect(self.clear_image)
+        self.btn_clear.setVisible(False)
+        h_btn_layout.addWidget(self.btn_clear)
+        gb_photo_layout.addLayout(h_btn_layout)
+        self.lbl_image_status = QLabel('<i>មិនទាន់មានរូបភាព / No image loaded</i>')
+        gb_photo_layout.addWidget(self.lbl_image_status)
+        gb_photo.setLayout(gb_photo_layout)
+        left_layout.addWidget(gb_photo)
+        gb_paper = QGroupBox('២. ទំហំក្រដាស / Paper Settings')
+        gb_paper_layout = QVBoxLayout()
+        gb_paper_layout.addWidget(QLabel('ទំហំក្រដាស / Size:'))
+        self.cb_paper_size = QComboBox()
+        self.cb_paper_size.addItems(['A4 (210 x 297 mm)', 'A3 (297 x 420 mm)', 'A5 (148 x 210 mm)', 'Letter (215.9 x 279.4 mm)', 'ក្រដាសរូបថត (10x15 cm)', 'ក្រដាសរូបថត (13x18 cm)', 'Custom size / ទំហំតាមតម្រូវការ'])
+        gb_paper_layout.addWidget(self.cb_paper_size)
+        h_size_layout = QHBoxLayout()
+        v_width = QVBoxLayout()
+        v_width.addWidget(QLabel('ទទឹង / Width (mm):'))
+        self.sb_width = QDoubleSpinBox()
+        self.sb_width.setMaximum(1000)
+        self.sb_width.setValue(210.0)
+        self.sb_width.valueChanged.connect(self.calculate_layout)
+        v_width.addWidget(self.sb_width)
+        v_height = QVBoxLayout()
+        v_height.addWidget(QLabel('កម្ពស់ / Height (mm):'))
+        self.sb_height = QDoubleSpinBox()
+        self.sb_height.setMaximum(1000)
+        self.sb_height.setValue(297.0)
+        self.sb_height.valueChanged.connect(self.calculate_layout)
+        v_height.addWidget(self.sb_height)
+        self.cb_paper_size.currentIndexChanged.connect(self.change_paper_size)
+        self.sb_width.setEnabled(False)
+        self.sb_height.setEnabled(False)
+        h_size_layout.addLayout(v_width)
+        h_size_layout.addLayout(v_height)
+        gb_paper_layout.addLayout(h_size_layout)
+        gb_paper_layout.addWidget(QLabel('ទិសដៅ / Orientation:'))
+        h_ori_layout = QHBoxLayout()
+        self.rb_port = QRadioButton('បញ្ឈរ / Port.')
+        self.rb_port.setChecked(True)
+        self.rb_land = QRadioButton('ផ្តេក / Land.')
+        self.rb_port.toggled.connect(self.change_orientation)
+        h_ori_layout.addWidget(self.rb_port)
+        h_ori_layout.addWidget(self.rb_land)
+        gb_paper_layout.addLayout(h_ori_layout)
+        gb_paper.setLayout(gb_paper_layout)
+        left_layout.addWidget(gb_paper)
+        gb_preset = QGroupBox('៣. ទំហំរូបថត / Photo Preset')
+        gb_preset_layout = QVBoxLayout()
+        gb_preset_layout.addWidget(QLabel('ខ្នាត / Unit:'))
+        self.cb_p_unit = QComboBox()
+        self.cb_p_unit.addItems(['cm', 'mm', 'inch', 'pixel'])
+        self.cb_p_unit.setCurrentIndex(1)
+        self.cb_p_unit.currentIndexChanged.connect(self.calculate_layout)
+        gb_preset_layout.addWidget(self.cb_p_unit)
+        h_dpi_layout = QHBoxLayout()
+        h_dpi_layout.addWidget(QLabel('គុណភាពបោះពុម្ព (DPI):'))
+        self.sb_dpi = QSpinBox()
+        self.sb_dpi.setRange(72, 1200)
+        self.sb_dpi.setValue(300)
+        self.sb_dpi.setSuffix(' DPI')
+        self.sb_dpi.valueChanged.connect(self.calculate_layout)
+        h_dpi_layout.addWidget(self.sb_dpi)
+        gb_preset_layout.addLayout(h_dpi_layout)
+        gb_preset_layout.addWidget(QLabel('<small><i>(300 DPI គឺល្អបំផុតសម្រាប់ការបោះពុម្ព)</i></small>'))
+        self.size_groups = []
+        default_sizes = [(35.0, 45.0), (27.0, 35.0), (55.5, 88.0)]
+        for i in range(3):
+            row_layout = QHBoxLayout()
+            chk = QCheckBox(f'ទំហំ {i + 1}')
+            chk.setChecked(i == 0)
+            chk.stateChanged.connect(self.calculate_layout)
+            sb_w = QDoubleSpinBox()
+            sb_w.setValue(default_sizes[i][0])
+            sb_w.setMaximum(5000)
+            sb_h = QDoubleSpinBox()
+            sb_h.setValue(default_sizes[i][1])
+            sb_h.setMaximum(5000)
+            sb_q = QSpinBox()
+            sb_q.setValue(4 if i == 0 else 0)
+            sb_q.setMaximum(1000)
+            sb_w.valueChanged.connect(self.calculate_layout)
+            sb_h.valueChanged.connect(self.calculate_layout)
+            sb_q.valueChanged.connect(self.calculate_layout)
+            row_layout.addWidget(chk)
+            row_layout.addWidget(QLabel('W:'))
+            row_layout.addWidget(sb_w)
+            row_layout.addWidget(QLabel('H:'))
+            row_layout.addWidget(sb_h)
+            row_layout.addWidget(QLabel('Qty:'))
+            row_layout.addWidget(sb_q)
+            gb_preset_layout.addLayout(row_layout)
+            self.size_groups.append({'chk': chk, 'w': sb_w, 'h': sb_h, 'qty': sb_q})
+        self.sb_p_width = self.size_groups[0]['w']
+        self.sb_p_height = self.size_groups[0]['h']
+        self.btn_reverse_p_size = QPushButton('ឆ្លាស់ទំហំ / Reverse Size')
+        self.btn_reverse_p_size.clicked.connect(self.reverse_photo_size)
+        gb_preset_layout.addWidget(self.btn_reverse_p_size)
+        self.chk_optimize_fit = QCheckBox('ស្វែងរកប្រព័ន្ធសម្រួលភាពស័ក្ដិសម / Optimize Fit')
+        self.chk_optimize_fit.setChecked(True)
+        self.chk_optimize_fit.stateChanged.connect(self.calculate_layout)
+        gb_preset_layout.addWidget(self.chk_optimize_fit)
+        gb_preset.setLayout(gb_preset_layout)
+        left_layout.addWidget(gb_preset)
+        gb_layout = QGroupBox('៤. ការរៀបចំ និងចំនួន / Layout Qty')
+        gb_layout_layout = QVBoxLayout()
+        self.rb_max_qty = QRadioButton('ពេញក្រដាស / Max Printable (Auto)')
+        self.rb_max_qty.setChecked(True)
+        gb_layout_layout.addWidget(self.rb_max_qty)
+        self.rb_max_qty.toggled.connect(self.calculate_layout)
+        self.rb_manual_layout = QRadioButton('រៀបចំដោយសេរី / Manual Layout (Drag)')
+        gb_layout_layout.addWidget(self.rb_manual_layout)
+        self.wg_align = QWidget()
+        align_grid = QGridLayout(self.wg_align)
+        align_grid.setContentsMargins(0, 0, 0, 0)
+        self.btn_align_left = QPushButton('Align Left')
+        self.btn_align_top = QPushButton('Align Top')
+        self.btn_align_right = QPushButton('Align Right')
+        self.btn_align_bottom = QPushButton('Align Bottom')
+        self.btn_dist_h = QPushButton('Distribute H')
+        self.btn_dist_v = QPushButton('Distribute V')
+        self.btn_align_left.clicked.connect(self.align_selected_left)
+        self.btn_align_top.clicked.connect(self.align_selected_top)
+        self.btn_align_right.clicked.connect(self.align_selected_right)
+        self.btn_align_bottom.clicked.connect(self.align_selected_bottom)
+        self.btn_dist_h.clicked.connect(self.distribute_horizontally)
+        self.btn_dist_v.clicked.connect(self.distribute_vertically)
+        align_grid.addWidget(self.btn_align_left, 0, 0)
+        align_grid.addWidget(self.btn_align_top, 0, 1)
+        align_grid.addWidget(self.btn_align_right, 1, 0)
+        align_grid.addWidget(self.btn_align_bottom, 1, 1)
+        align_grid.addWidget(self.btn_dist_h, 2, 0)
+        align_grid.addWidget(self.btn_dist_v, 2, 1)
+        self.wg_align.setVisible(False)
+        gb_layout_layout.addWidget(self.wg_align)
+        self.lbl_manual_tip = QLabel("<i>💡 ប្រើម៉ៅស៍ឆ្វេង (Left Click) ទាញរូបថតដែលបានជ្រើសរើសដើម្បីផ្លាស់ទី<br>និងចុចគ្រាប់ចុច 'R' ដើម្បីបង្វិលរូបភាព។</i>")
+        self.lbl_manual_tip.setStyleSheet('color: #d97706; font-size: 11px;')
+        self.lbl_manual_tip.setVisible(False)
+        gb_layout_layout.addWidget(self.lbl_manual_tip)
+        self.rb_manual_layout.toggled.connect(self.toggle_manual_mode)
+        gb_layout.setLayout(gb_layout_layout)
+        left_layout.addWidget(gb_layout)
+        mid_panel = QWidget()
+        mid_layout = QVBoxLayout(mid_panel)
+        mid_title = QLabel('<b>ទិដ្ឋភាពបង្ហាញជាក់ស្តែង / LIVE PRINT PREVIEW</b>')
+        mid_title.setAlignment(Qt.AlignCenter)
+        mid_title.setFont(QFont('Khmer OS Battambang', 11))
+        mid_layout.addWidget(mid_title)
+        mid_layout.addWidget(self.scroll_area)
+        self.pagination_widget = QWidget()
+        pag_layout = QHBoxLayout(self.pagination_widget)
+        pag_layout.setContentsMargins(0, 5, 0, 0)
+        self.btn_prev_page = QPushButton('◀ ត្រឡប់ក្រោយ / Prev')
+        self.btn_prev_page.clicked.connect(self.go_to_previous_page)
+        self.lbl_page_info = QLabel('ទំព័រ / Page: 0 / 0')
+        self.lbl_page_info.setAlignment(Qt.AlignCenter)
+        self.btn_next_page = QPushButton('ទៅមុខ / Next ▶')
+        self.btn_next_page.clicked.connect(self.go_to_next_page)
+        pag_layout.addWidget(self.btn_prev_page)
+        pag_layout.addWidget(self.lbl_page_info)
+        pag_layout.addWidget(self.btn_next_page)
+        mid_layout.addWidget(self.pagination_widget)
+        self.pagination_widget.setVisible(False)
+        right_panel = QWidget()
+        right_panel.setFixedWidth(320)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setAlignment(Qt.AlignTop)
+        gb_margin = QGroupBox('៥. គម្លាត និងគែម / Margins & Gaps')
+        gb_margin_layout = QVBoxLayout()
+        grid_margin = QGridLayout()
+        grid_margin.addWidget(QLabel('លើ / Top:'), 0, 0)
+        self.sb_margin_top = QSpinBox()
+        self.sb_margin_top.setValue(0)
+        self.sb_margin_top.setSuffix(' mm')
+        self.sb_margin_top.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_top, 0, 1)
+        grid_margin.addWidget(QLabel('ក្រោម / Bottom:'), 0, 2)
+        self.sb_margin_bottom = QSpinBox()
+        self.sb_margin_bottom.setValue(0)
+        self.sb_margin_bottom.setSuffix(' mm')
+        self.sb_margin_bottom.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_bottom, 0, 3)
+        grid_margin.addWidget(QLabel('ឆ្វេង / Left:'), 1, 0)
+        self.sb_margin_left = QSpinBox()
+        self.sb_margin_left.setValue(0)
+        self.sb_margin_left.setSuffix(' mm')
+        self.sb_margin_left.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_left, 1, 1)
+        grid_margin.addWidget(QLabel('ស្តាំ / Right:'), 1, 2)
+        self.sb_margin_right = QSpinBox()
+        self.sb_margin_right.setValue(0)
+        self.sb_margin_right.setSuffix(' mm')
+        self.sb_margin_right.valueChanged.connect(self.calculate_layout)
+        grid_margin.addWidget(self.sb_margin_right, 1, 3)
+        gb_margin_layout.addLayout(grid_margin)
+        h_gap_layout = QHBoxLayout()
+        h_gap_layout.addWidget(QLabel('ចន្លោះរូបថត / Photo Gap:'))
+        self.sb_gap = QSpinBox()
+        self.sb_gap.setValue(2)
+        self.sb_gap.setSuffix(' mm')
+        self.sb_gap.valueChanged.connect(self.calculate_layout)
+        h_gap_layout.addWidget(self.sb_gap)
+        gb_margin_layout.addLayout(h_gap_layout)
+        h_center_layout = QHBoxLayout()
+        self.chk_center_h = QCheckBox('តម្រឹមផ្ដេក / Auto Center H')
+        self.chk_center_h.setChecked(True)
+        self.chk_center_v = QCheckBox('តម្រឹមបញ្ឈរ / Auto Center V')
+        self.chk_center_v.setChecked(True)
+        self.chk_center_h.stateChanged.connect(self.toggle_auto_center)
+        self.chk_center_v.stateChanged.connect(self.toggle_auto_center)
+        h_center_layout.addWidget(self.chk_center_h)
+        h_center_layout.addWidget(self.chk_center_v)
+        gb_margin_layout.addLayout(h_center_layout)
+        self.chk_show_border = QCheckBox('បន្ទាត់ស៊ុម / Image Outline')
+        self.chk_show_border.stateChanged.connect(self.toggle_border)
+        gb_margin_layout.addWidget(self.chk_show_border)
+        h_border_weight_layout = QHBoxLayout()
+        h_border_weight_layout.addWidget(QLabel('កម្រាស់ / Weight (pt):'))
+        self.sl_border_weight = QSlider(Qt.Horizontal)
+        self.sl_border_weight.setRange(0, 100)
+        self.sl_border_weight.setValue(5)
+        self.sb_border_weight = QDoubleSpinBox()
+        self.sb_border_weight.setDecimals(2)
+        self.sb_border_weight.setRange(0.0, 10.0)
+        self.sb_border_weight.setValue(0.5)
+        self.sb_border_weight.setSingleStep(0.1)
+        self.sl_border_weight.valueChanged.connect(self.on_border_slider_changed)
+        self.sb_border_weight.valueChanged.connect(self.on_border_spinbox_changed)
+        h_border_weight_layout.addWidget(self.sl_border_weight)
+        h_border_weight_layout.addWidget(self.sb_border_weight)
+        gb_margin_layout.addLayout(h_border_weight_layout)
+        gb_margin.setLayout(gb_margin_layout)
+        right_layout.addWidget(gb_margin)
+        gb_img_prop = QGroupBox('៦. ការកំណត់រូបភាព / Image properties')
+        gb_img_prop_layout = QVBoxLayout()
+        self.rb_img_fill = QRadioButton('បំពេញ (លាត) / Image Fill (Stretch)')
+        self.rb_img_cover = QRadioButton('គ្របដណ្តប់ (កាត់) / Image Cover (Crop)')
+        self.rb_img_contain = QRadioButton('ផ្ទុក (រក្សាសមាមាត្រ) / Image Contain (Fit)')
+        self.bg_img_mode = QButtonGroup(self)
+        self.bg_img_mode.addButton(self.rb_img_fill)
+        self.bg_img_mode.addButton(self.rb_img_cover)
+        self.bg_img_mode.addButton(self.rb_img_contain)
+        self.lbl_cover_tip = QLabel('<i>💡 ពេលកាត់ (Cover): ចុច Shift + ម៉ៅស៍ឆ្វេង ហើយទាញ (Drag) លើរូបដើម្បីរំកិល<br>និង Shift + Scroll ម៉ៅស៍ ដើម្បីពង្រីក/ពង្រួមរូប។</i>')
+        self.lbl_cover_tip.setStyleSheet('color: #d97706; font-size: 11px;')
+        self.lbl_cover_tip.setVisible(False)
+        self.btn_select_all = QPushButton('ជ្រើសរើសទាំងអស់')
+        self.btn_select_all.clicked.connect(self.select_all_photos)
+        self.btn_deselect_all = QPushButton('ដកការជ្រើសរើស')
+        self.btn_deselect_all.clicked.connect(self.deselect_all_photos)
+        h_sel_layout = QHBoxLayout()
+        h_sel_layout.setContentsMargins(0, 0, 0, 0)
+        h_sel_layout.addWidget(self.btn_select_all)
+        h_sel_layout.addWidget(self.btn_deselect_all)
+        self.wg_selection = QWidget()
+        self.wg_selection.setLayout(h_sel_layout)
+        self.wg_selection.setVisible(True)
+        self.rb_img_fill.setChecked(True)
+        self.rb_img_fill.toggled.connect(self.change_image_mode)
+        self.rb_img_cover.toggled.connect(self.change_image_mode)
+        self.rb_img_contain.toggled.connect(self.change_image_mode)
+        gb_img_prop_layout.addWidget(self.rb_img_fill)
+        gb_img_prop_layout.addWidget(self.rb_img_cover)
+        gb_img_prop_layout.addWidget(self.rb_img_contain)
+        gb_img_prop_layout.addWidget(self.lbl_cover_tip)
+        gb_img_prop_layout.addWidget(self.wg_selection)
+        gb_img_prop.setLayout(gb_img_prop_layout)
+        right_layout.addWidget(gb_img_prop)
+        gb_img_adj = QGroupBox('៧. ការកែសម្រួលរូបភាព / Image Adjustment')
+        gb_img_adj_layout = QVBoxLayout()
+        self.btn_change_selected_image = QPushButton('ផ្លាស់ប្ដូររូបភាពដែលបានជ្រើសរើស / Change Selected Image')
+        self.btn_change_selected_image.clicked.connect(self.change_selected_image)
+        self.btn_change_selected_image.setEnabled(False)
+        gb_img_adj_layout.addWidget(self.btn_change_selected_image)
+        self.btn_reset_selected_image = QPushButton('កំណត់រូបភាពដើម / Reset Selected Image')
+        self.btn_reset_selected_image.clicked.connect(self.reset_selected_image)
+        self.btn_reset_selected_image.setEnabled(False)
+        gb_img_adj_layout.addWidget(self.btn_reset_selected_image)
+        self.lbl_adj_tip = QLabel('<i>💡 មុខងារនេះដំណើរការនៅពេលមានរូបភាពផ្ទុកហើយ និងមានរូបថតយ៉ាងហោចណាស់មួយត្រូវបានជ្រើសរើស។</i>')
+        self.lbl_adj_tip.setStyleSheet('color: #d97706; font-size: 11px;')
+        gb_img_adj_layout.addWidget(self.lbl_adj_tip)
+        gb_img_adj.setLayout(gb_img_adj_layout)
+        right_layout.addWidget(gb_img_adj)
+        gb_grid_mode = QGroupBox('៨. ច្រើនរូបក្នុងមួយសន្លឹក / Multi-Image Grid')
+        gb_grid_mode_layout = QVBoxLayout()
+        self.chk_enable_grid = QCheckBox('ប្រើប្រាស់មុខងារនេះ / Enable Grid Mode')
+        self.chk_enable_grid.stateChanged.connect(self.toggle_grid_mode)
+        gb_grid_mode_layout.addWidget(self.chk_enable_grid)
+        grid_rc_layout = QGridLayout()
+        grid_rc_layout.addWidget(QLabel('ជួរឈរ (Columns):'), 0, 0)
+        self.sb_grid_cols = QSpinBox()
+        self.sb_grid_cols.setRange(1, 100)
+        self.sb_grid_cols.setValue(1)
+        self.sb_grid_cols.valueChanged.connect(self.calculate_layout)
+        self.sb_grid_cols.setEnabled(False)
+        grid_rc_layout.addWidget(self.sb_grid_cols, 0, 1)
+        grid_rc_layout.addWidget(QLabel('ជួរដេក (Rows):'), 0, 2)
+        self.sb_grid_rows = QSpinBox()
+        self.sb_grid_rows.setRange(1, 100)
+        self.sb_grid_rows.setValue(1)
+        self.sb_grid_rows.valueChanged.connect(self.calculate_layout)
+        self.sb_grid_rows.setEnabled(False)
+        grid_rc_layout.addWidget(self.sb_grid_rows, 0, 3)
+        gb_grid_mode_layout.addLayout(grid_rc_layout)
+        self.rb_grid_same_size = QRadioButton('ធ្វើឲ្យទំហំប៉ុនគ្នា / Make same size of image')
+        self.rb_grid_same_size.setChecked(True)
+        self.rb_grid_same_size.setEnabled(False)
+        self.rb_grid_same_size.toggled.connect(self.calculate_layout)
+        self.rb_grid_original_size = QRadioButton('រក្សាទំហំដើម / Original size of image')
+        self.rb_grid_original_size.setEnabled(False)
+        self.rb_grid_original_size.toggled.connect(self.calculate_layout)
+        gb_grid_mode_layout.addWidget(self.rb_grid_same_size)
+        gb_grid_mode_layout.addWidget(self.rb_grid_original_size)
+        gb_grid_mode.setLayout(gb_grid_mode_layout)
+        right_layout.addWidget(gb_grid_mode)
+        right_layout.addStretch()
+        self.lbl_status = QLabel('<b>អាចដាក់បាន: 36 / 36 រូបភាព (បញ្ឈរ (Portrait))</b>')
+        self.lbl_status.setStyleSheet('color: #16947b;')
+        right_layout.addWidget(self.lbl_status)
+        h_save_layout = QHBoxLayout()
+        btn_save_pdf = QPushButton('រក្សាទុក PDF / Save PDF')
+        btn_save_pdf.setStyleSheet('background-color: #128c7e; color: white; padding: 12px; font-weight: bold; border-radius: 5px;')
+        btn_save_pdf.clicked.connect(self.save_pdf)
+        btn_settings = QPushButton('⚙')
+        btn_settings.setToolTip('កំណត់ទីតាំងរក្សាទុក PDF / Set PDF Save Folder')
+        btn_settings.setStyleSheet('background-color: #64748b; color: white; padding: 12px; font-weight: bold; border-radius: 5px; font-size: 16px;')
+        btn_settings.setFixedWidth(50)
+        btn_settings.clicked.connect(self.open_settings)
+        h_save_layout.addWidget(btn_save_pdf)
+        h_save_layout.addWidget(btn_settings)
+        btn_print = QPushButton('បញ្ចូនទៅ Foxit PDF/ Import to Foxit')
+        btn_print.setStyleSheet('background-color: #5850ec; color: white; padding: 12px; font-weight: bold; border-radius: 5px;')
+        btn_print.clicked.connect(self.import_to_foxit)
+        btn_support = QLabel('សរសេរដោយ៖ ដែកូដថ្មី Ver.1.0.5')
+        btn_support.setStyleSheet(' color: green ; padding: 12px; font-weight: bold; border-radius: 5px;')
+        right_layout.addLayout(h_save_layout)
+        right_layout.addWidget(btn_print)
+        right_layout.addWidget(btn_support)
+        main_layout.addWidget(left_panel)
+        main_layout.addWidget(mid_panel, 1)
+        main_layout.addWidget(right_panel)
+        self.tab2 = QWidget()
+        self.initTextUI(self.tab2)
+        self.tab3 = QWidget()
+        self.initIDCardUI(self.tab3)
+        self.tabs.addTab(self.tab1, '១. បោះពុម្ពរូបថត / Photo Print')
+        self.tabs.addTab(self.tab2, '២. សរសេរអក្សរធំ / Large Text Banner')
+        self.tabs.addTab(self.tab3, '៣. បោះពុម្ពកាតសម្គាល់ខ្លួន / ID Card Print')
+        layout = QVBoxLayout(main_widget)
+        layout.addWidget(self.tabs)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.calculate_layout()
+
+    def initTextUI(self, parent_widget):
+        from PyQt5.QtWidgets import QTextEdit, QFontComboBox, QColorDialog
+        layout = QHBoxLayout(parent_widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        left_panel = QWidget()
+        left_panel.setFixedWidth(400)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setAlignment(Qt.AlignTop)
+        title_lbl = QLabel('<b>សរសេរអក្សរធំ / Large Text Banner</b>')
+        title_lbl.setFont(QFont('Khmer OS Battambang', 12))
+        left_layout.addWidget(title_lbl)
+        gb_text = QGroupBox('១. អត្ថបទ / Text Input')
+        gb_text_layout = QVBoxLayout()
+        h_model_layout = QHBoxLayout()
+        h_model_layout.addWidget(QLabel('ម៉ូដែល AI / AI Model:'))
+        self.cb_ai_model = QComboBox()
+        self.cb_ai_model.addItems(['gemini-2.5-flash', 'gemini-3.5-flash'])
+        h_model_layout.addWidget(self.cb_ai_model)
+        self.btn_change_api = QPushButton('🔑 ផ្លាស់ប្តូរ API Key')
+        self.btn_change_api.setStyleSheet('background-color: #f59e0b; color: white; padding: 5px; border-radius: 3px; font-weight: bold;')
+        self.btn_change_api.clicked.connect(self.change_api_key)
+        h_model_layout.addWidget(self.btn_change_api)
+        gb_text_layout.addLayout(h_model_layout)
+        self.btn_ai_ocr = QPushButton('ទាញអត្ថបទពីរូបភាព (AI) / Extract Text from Image')
+        self.btn_ai_ocr.setStyleSheet('background-color: #2b52ff; color: white; padding: 8px; border-radius: 5px; font-weight: bold;')
+        self.btn_ai_ocr.clicked.connect(self.extract_text_from_image)
+        gb_text_layout.addWidget(self.btn_ai_ocr)
+        self.txt_banner = QTextEdit()
+        self.txt_banner.setPlaceholderText('បញ្ចូលអត្ថបទទីនេះ...')
+        font_battambang = QFont('Khmer OS Battambang', 12)
+        self.txt_banner.setFont(font_battambang)
+        self.txt_banner.textChanged.connect(self.update_text_preview)
+        gb_text_layout.addWidget(self.txt_banner)
+        self.btn_clear_text = QPushButton('លុបអត្ថបទ / Clear Text')
+        self.btn_clear_text.setStyleSheet('background-color: #ef4444; color: white; padding: 8px; border-radius: 5px; font-weight: bold;')
+        self.btn_clear_text.clicked.connect(self.txt_banner.clear)
+        gb_text_layout.addWidget(self.btn_clear_text)
+        gb_text.setLayout(gb_text_layout)
+        left_layout.addWidget(gb_text)
+        self.btn_clear_text = QPushButton('លុបអត្ថបទ / Clear Text')
+        self.btn_clear_text.setStyleSheet('background-color: #ef4444; color: white; padding: 8px; border-radius: 5px; font-weight: bold;')
+        self.btn_clear_text.clicked.connect(self.txt_banner.clear)
+        gb_font = QGroupBox('២. កំណត់អក្សរ / Font Settings')
+        gb_font_layout = QVBoxLayout()
+        self.cb_font_kh = QComboBox()
+        self.cb_font_en = QComboBox()
+        from PyQt5.QtCore import QSettings
+        self.settings = QSettings('PhotoPrintApp', 'Settings')
+        from PyQt5.QtGui import QFontDatabase
+        all_fonts = QFontDatabase().families()
+        freq_fonts = ['AKbalthom Moul 4', 'Khmer OS Muol Light', 'Khmer OS Battambang', 'Times New Roman', 'Arial', 'Roboto', 'Inter']
+        h_fonts_layout = QHBoxLayout()
+        v_kh_layout = QVBoxLayout()
+        v_kh_layout.addWidget(QLabel('អក្សរខ្មែរ (Khmer Font):'))
+        self.cb_font_kh.setEditable(True)
+        self.cb_font_kh.addItems(freq_fonts)
+        self.cb_font_kh.insertSeparator(len(freq_fonts))
+        for f in all_fonts:
+            if f not in freq_fonts:
+                self.cb_font_kh.addItem(f)
+        saved_kh_font = self.settings.value('font_kh', 'Khmer OS Muol Light')
+        self.cb_font_kh.setCurrentText(saved_kh_font)
+        self.cb_font_kh.currentTextChanged.connect(self.save_fonts)
+        v_kh_layout.addWidget(self.cb_font_kh)
+        h_fonts_layout.addLayout(v_kh_layout)
+        v_en_layout = QVBoxLayout()
+        v_en_layout.addWidget(QLabel('អក្សរអង់គ្លេស (English Font):'))
+        self.cb_font_en.setEditable(True)
+        self.cb_font_en.addItems(freq_fonts)
+        self.cb_font_en.insertSeparator(len(freq_fonts))
+        for f in all_fonts:
+            if f not in freq_fonts:
+                self.cb_font_en.addItem(f)
+        saved_en_font = self.settings.value('font_en', 'Arial')
+        self.cb_font_en.setCurrentText(saved_en_font)
+        self.cb_font_en.currentTextChanged.connect(self.save_fonts)
+        v_en_layout.addWidget(self.cb_font_en)
+        h_fonts_layout.addLayout(v_en_layout)
+        gb_font_layout.addLayout(h_fonts_layout)
+        h_font = QHBoxLayout()
+        self.btn_bold = QPushButton('B')
+        self.btn_bold.setFont(QFont('Arial', 10, QFont.Bold))
+        self.btn_bold.setCheckable(True)
+        self.btn_italic = QPushButton('I')
+        self.btn_italic.setFont(QFont('Arial', 10, QFont.Normal, True))
+        self.btn_italic.setCheckable(True)
+        self.btn_underline = QPushButton('U')
+        font_u = QFont('Arial', 10)
+        font_u.setUnderline(True)
+        self.btn_underline.setFont(font_u)
+        self.btn_underline.setCheckable(True)
+        self.btn_bold.toggled.connect(self.update_text_preview)
+        self.btn_italic.toggled.connect(self.update_text_preview)
+        self.btn_underline.toggled.connect(self.update_text_preview)
+        h_font.addWidget(self.btn_bold)
+        h_font.addWidget(self.btn_italic)
+        h_font.addWidget(self.btn_underline)
+        h_font.addStretch()
+        gb_font_layout.addLayout(h_font)
+        h_size = QHBoxLayout()
+        h_size.addWidget(QLabel('ទំហំ / Size (pt):'))
+        self.sb_font_size = QSpinBox()
+        self.sb_font_size.setRange(8, 1000)
+        self.sb_font_size.setValue(100)
+        self.sb_font_size.valueChanged.connect(self.update_text_preview)
+        h_size.addWidget(self.sb_font_size)
+        gb_font_layout.addLayout(h_size)
+        self.chk_auto_fit = QCheckBox('បំពេញពេញក្រដាស / Auto-Fit Paper')
+        self.chk_auto_fit.setChecked(False)
+        self.chk_auto_fit.stateChanged.connect(self.toggle_auto_fit)
+        gb_font_layout.addWidget(self.chk_auto_fit)
+        self.chk_free_stretch = QCheckBox('ទាញដោយសេរី / Free Stretch')
+        self.chk_free_stretch.setChecked(False)
+        self.chk_free_stretch.stateChanged.connect(self.toggle_free_stretch)
+        gb_font_layout.addWidget(self.chk_free_stretch)
+        self.btn_fill_paper = QPushButton('ទាញបំពេញក្រដាស / Stretch to Fill')
+        self.btn_fill_paper.setEnabled(False)
+        self.btn_fill_paper.clicked.connect(self.stretch_to_fill)
+        gb_font_layout.addWidget(self.btn_fill_paper)
+        h_color = QHBoxLayout()
+        self.btn_text_color = QPushButton('ពណ៌អក្សរ / Text Color')
+        self.btn_text_color.setStyleSheet('background-color: black; color: white;')
+        self.btn_text_color.clicked.connect(self.choose_text_color)
+        self.btn_text_bg_color = QPushButton('ពណ៌ផ្ទៃអក្សរ / Text BG')
+        self.btn_text_bg_color.setStyleSheet('background-color: transparent; color: black;')
+        self.btn_text_bg_color.clicked.connect(self.choose_text_bg_color)
+        h_color.addWidget(self.btn_text_color)
+        h_color.addWidget(self.btn_text_bg_color)
+        gb_font_layout.addLayout(h_color)
+        h_align = QHBoxLayout()
+        self.btn_align_left_t = QPushButton('Left')
+        self.btn_align_center_t = QPushButton('Center')
+        self.btn_align_right_t = QPushButton('Right')
+        self.btn_align_left_t.clicked.connect(lambda: self.set_text_h_align(Qt.AlignLeft))
+        self.btn_align_center_t.clicked.connect(lambda: self.set_text_h_align(Qt.AlignHCenter))
+        self.btn_align_right_t.clicked.connect(lambda: self.set_text_h_align(Qt.AlignRight))
+        h_align.addWidget(self.btn_align_left_t)
+        h_align.addWidget(self.btn_align_center_t)
+        h_align.addWidget(self.btn_align_right_t)
+        gb_font_layout.addLayout(h_align)
+        v_align = QHBoxLayout()
+        self.btn_align_top_t = QPushButton('Top')
+        self.btn_align_mid_t = QPushButton('Mid')
+        self.btn_align_bot_t = QPushButton('Bottom')
+        self.btn_align_top_t.clicked.connect(lambda: self.set_text_v_align(Qt.AlignTop))
+        self.btn_align_mid_t.clicked.connect(lambda: self.set_text_v_align(Qt.AlignVCenter))
+        self.btn_align_bot_t.clicked.connect(lambda: self.set_text_v_align(Qt.AlignBottom))
+        v_align.addWidget(self.btn_align_top_t)
+        v_align.addWidget(self.btn_align_mid_t)
+        v_align.addWidget(self.btn_align_bot_t)
+        gb_font_layout.addLayout(v_align)
+        gb_font.setLayout(gb_font_layout)
+        left_layout.addWidget(gb_font)
+        gb_paper = QGroupBox('៣. ក្រដាស និងគែម / Paper & Margin')
+        gb_paper_layout = QVBoxLayout()
+        self.cb_t_paper = QComboBox()
+        self.cb_t_paper.addItems(['A4 (210 x 297 mm)', 'A3 (297 x 420 mm)', 'A5 (148 x 210 mm)', 'Letter (215.9 x 279.4 mm)', 'Custom / ផ្សេងៗ'])
+        self.cb_t_paper.currentIndexChanged.connect(self.on_t_paper_changed)
+        gb_paper_layout.addWidget(QLabel('ទំហំក្រដាស / Paper Size:'))
+        gb_paper_layout.addWidget(self.cb_t_paper)
+        self.w_custom_t_paper = QWidget()
+        h_custom = QHBoxLayout(self.w_custom_t_paper)
+        h_custom.setContentsMargins(0, 0, 0, 0)
+        self.sb_custom_t_w = QDoubleSpinBox()
+        self.sb_custom_t_w.setRange(10, 5000)
+        self.sb_custom_t_w.setValue(210)
+        self.sb_custom_t_w.valueChanged.connect(self.update_text_paper)
+        self.sb_custom_t_h = QDoubleSpinBox()
+        self.sb_custom_t_h.setRange(10, 5000)
+        self.sb_custom_t_h.setValue(297)
+        self.sb_custom_t_h.valueChanged.connect(self.update_text_paper)
+        h_custom.addWidget(QLabel('W(mm):'))
+        h_custom.addWidget(self.sb_custom_t_w)
+        h_custom.addWidget(QLabel('H(mm):'))
+        h_custom.addWidget(self.sb_custom_t_h)
+        self.w_custom_t_paper.hide()
+        gb_paper_layout.addWidget(self.w_custom_t_paper)
+        h_ori = QHBoxLayout()
+        self.rb_t_port = QRadioButton('បញ្ឈរ / Port.')
+        self.rb_t_land = QRadioButton('ផ្តេក / Land.')
+        self.rb_t_land.setChecked(True)
+        self.rb_t_port.toggled.connect(self.update_text_paper)
+        h_ori.addWidget(self.rb_t_port)
+        h_ori.addWidget(self.rb_t_land)
+        gb_paper_layout.addLayout(h_ori)
+        h_margin = QHBoxLayout()
+        h_margin.addWidget(QLabel('គែម / Margin (mm):'))
+        self.sb_t_margin = QSpinBox()
+        self.sb_t_margin.setValue(5)
+        self.sb_t_margin.valueChanged.connect(self.update_text_preview)
+        h_margin.addWidget(self.sb_t_margin)
+        gb_paper_layout.addLayout(h_margin)
+        gb_paper.setLayout(gb_paper_layout)
+        left_layout.addWidget(gb_paper)
+        left_layout.addStretch()
+        btn_save_pdf = QPushButton('រក្សាទុកជា PDF')
+        btn_save_pdf.setStyleSheet('background-color: #128c7e; color: white; padding: 12px; font-weight: bold; border-radius: 5px;')
+        btn_save_pdf.clicked.connect(self.save_text_pdf)
+        btn_print = QPushButton('បញ្ជូនទៅ Foxit')
+        btn_print.setStyleSheet('background-color: #5850ec; color: white; padding: 12px; font-weight: bold; border-radius: 5px;')
+        btn_print.clicked.connect(self.import_text_to_foxit)
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_panel.setFixedWidth(130)
+        right_layout.addStretch()
+        right_layout.addWidget(btn_save_pdf)
+        right_layout.addWidget(btn_print)
+        mid_panel = QWidget()
+        mid_layout = QVBoxLayout(mid_panel)
+        mid_title = QLabel('<b>ទិដ្ឋភាពបង្ហាញជាក់ស្តែង / LIVE TEXT PREVIEW</b>')
+        mid_title.setAlignment(Qt.AlignCenter)
+        mid_title.setFont(QFont('Khmer OS Battambang', 11))
+        mid_layout.addWidget(mid_title)
+        self.text_preview = TextPreviewWidget()
+        self.text_preview.selectionChanged.connect(self.on_text_selection_changed)
+        mid_layout.addWidget(self.text_preview)
+        layout.addWidget(left_panel)
+        layout.addWidget(mid_panel, 1)
+        layout.addWidget(right_panel)
+        self.text_color = QColor(0, 0, 0)
+        self.text_bg_color = QColor(Qt.transparent)
+        self.bg_color = QColor(255, 255, 255)
+        self.text_h_align = Qt.AlignHCenter
+        self.text_v_align = Qt.AlignVCenter
+        self.text_align = self.text_h_align | self.text_v_align
+        self.update_text_paper()
+
+    def on_t_paper_changed(self):
+        txt = self.cb_t_paper.currentText()
+        if 'Custom' in txt:
+            self.w_custom_t_paper.show()
+        else:
+            self.w_custom_t_paper.hide()
+        self.update_text_paper()
+
+    def update_text_paper(self):
+        txt = self.cb_t_paper.currentText()
+        if 'A4' in txt:
+            w, h = (210.0, 297.0)
+        elif 'A3' in txt:
+            w, h = (297.0, 420.0)
+        elif 'A5' in txt:
+            w, h = (148.0, 210.0)
+        elif 'Custom' in txt:
+            w, h = (self.sb_custom_t_w.value(), self.sb_custom_t_h.value())
+        else:
+            w, h = (215.9, 279.4)
+        if self.rb_t_land.isChecked():
+            w, h = (h, w)
+        self.text_preview.paper_w = w
+        self.text_preview.paper_h = h
+        self.update_text_preview()
+
+    def toggle_auto_fit(self):
+        self.sb_font_size.setEnabled(not self.chk_auto_fit.isChecked() and (not self.chk_free_stretch.isChecked()))
+        self.update_text_preview()
+
+    def toggle_free_stretch(self):
+        is_free = self.chk_free_stretch.isChecked()
+        self.chk_auto_fit.setEnabled(not is_free)
+        self.sb_font_size.setEnabled(not is_free and (not self.chk_auto_fit.isChecked()))
+        self.btn_fill_paper.setEnabled(is_free)
+        self.text_preview.free_stretch = is_free
+        self.text_preview.update()
+
+    def stretch_to_fill(self):
+        m = self.sb_t_margin.value()
+        lines = self.txt_banner.toPlainText().split('\n')
+        num_lines = max(1, len(lines))
+        avail_h = self.text_preview.paper_h - 2 * m
+        avail_w = self.text_preview.paper_w - 2 * m
+        gap = 5.0
+        line_h = (avail_h - gap * (num_lines - 1)) / num_lines
+        for i, data in enumerate(self.text_preview.lines_data):
+            y = m + i * (line_h + gap)
+            data['rect'] = QRectF(m, y, avail_w, line_h)
+        self.text_preview.update()
+
+    def save_fonts(self):
+        self.settings.setValue('font_kh', self.cb_font_kh.currentText())
+        self.settings.setValue('font_en', self.cb_font_en.currentText())
+        self.update_text_preview()
+
+    def update_text_preview(self):
+        self.text_preview.set_text(self.txt_banner.toPlainText())
+        self.text_preview.font_family_kh = self.cb_font_kh.currentText()
+        self.text_preview.font_family_en = self.cb_font_en.currentText()
+        self.text_preview.base_font_size = self.sb_font_size.value()
+        self.text_preview.font_bold = self.btn_bold.isChecked()
+        self.text_preview.font_italic = self.btn_italic.isChecked()
+        self.text_preview.font_underline = self.btn_underline.isChecked()
+        self.text_preview.text_color = self.text_color
+        self.text_preview.text_bg_color = self.text_bg_color
+        self.text_preview.bg_color = self.bg_color
+        self.text_preview.text_align = self.text_align
+        self.text_preview.auto_fit = self.chk_auto_fit.isChecked()
+        if self.chk_free_stretch.isChecked() and self.text_preview.lines_data:
+            idx = self.text_preview.selected_line_idx
+            if 0 <= idx < len(self.text_preview.lines_data):
+                self.text_preview.lines_data[idx]['font_kh'] = self.cb_font_kh.currentText()
+                self.text_preview.lines_data[idx]['font_en'] = self.cb_font_en.currentText()
+                self.text_preview.lines_data[idx]['base_size'] = self.sb_font_size.value()
+                self.text_preview.lines_data[idx]['color'] = self.text_color
+                self.text_preview.lines_data[idx]['bold'] = self.btn_bold.isChecked()
+                self.text_preview.lines_data[idx]['italic'] = self.btn_italic.isChecked()
+                self.text_preview.lines_data[idx]['underline'] = self.btn_underline.isChecked()
+        m = self.sb_t_margin.value()
+        self.text_preview.margin_top = m
+        self.text_preview.margin_bottom = m
+        self.text_preview.margin_left = m
+        self.text_preview.margin_right = m
+        self.text_preview.update()
+
+    def on_text_selection_changed(self, idx):
+        if 0 <= idx < len(self.text_preview.lines_data):
+            data = self.text_preview.lines_data[idx]
+            self.cb_font_kh.blockSignals(True)
+            self.cb_font_kh.setCurrentText(data.get('font_kh', self.cb_font_kh.currentText()))
+            self.cb_font_kh.blockSignals(False)
+            self.cb_font_en.blockSignals(True)
+            self.cb_font_en.setCurrentText(data.get('font_en', self.cb_font_en.currentText()))
+            self.cb_font_en.blockSignals(False)
+            self.btn_bold.blockSignals(True)
+            self.btn_bold.setChecked(data.get('bold', False))
+            self.btn_bold.blockSignals(False)
+            self.btn_italic.blockSignals(True)
+            self.btn_italic.setChecked(data.get('italic', False))
+            self.btn_italic.blockSignals(False)
+            self.btn_underline.blockSignals(True)
+            self.btn_underline.setChecked(data.get('underline', False))
+            self.btn_underline.blockSignals(False)
+            self.text_color = data['color']
+            lum = self.text_color.red() * 0.299 + self.text_color.green() * 0.587 + self.text_color.blue() * 0.114
+            text_col = 'black' if lum > 128 else 'white'
+            self.btn_text_color.setStyleSheet(f'background-color: {self.text_color.name()}; color: {text_col};')
+            self.text_bg_color = data.get('bg_color', QColor(Qt.transparent))
+            if self.text_bg_color.alpha() == 0:
+                self.btn_text_bg_color.setStyleSheet('background-color: transparent; color: black;')
+            else:
+                lum_bg = self.text_bg_color.red() * 0.299 + self.text_bg_color.green() * 0.587 + self.text_bg_color.blue() * 0.114
+                bg_text_col = 'black' if lum_bg > 128 else 'white'
+                self.btn_text_bg_color.setStyleSheet(f'background-color: {self.text_bg_color.name()}; color: {bg_text_col};')
+
+    def choose_text_bg_color(self):
+        from PyQt5.QtWidgets import QColorDialog
+        init_color = self.text_bg_color if self.text_bg_color.alpha() > 0 else QColor(255, 255, 255)
+        color = QColorDialog.getColor(init_color, self, 'ជ្រើសរើសពណ៌ផ្ទៃអក្សរ / Text BG Color', QColorDialog.ShowAlphaChannel)
+        if color.isValid():
+            self.text_bg_color = color
+            lum_bg = self.text_bg_color.red() * 0.299 + self.text_bg_color.green() * 0.587 + self.text_bg_color.blue() * 0.114
+            bg_text_col = 'black' if lum_bg > 128 else 'white'
+            self.btn_text_bg_color.setStyleSheet(f'background-color: {self.text_bg_color.name()}; color: {bg_text_col};')
+            if self.chk_free_stretch.isChecked() and self.text_preview.lines_data:
+                idx = self.text_preview.selected_line_idx
+                if 0 <= idx < len(self.text_preview.lines_data):
+                    self.text_preview.lines_data[idx]['bg_color'] = self.text_bg_color
+            self.text_preview.update()
+
+    def choose_text_color(self):
+        from PyQt5.QtWidgets import QColorDialog
+        color = QColorDialog.getColor(self.text_color, self)
+        if color.isValid():
+            self.text_color = color
+            lum = color.red() * 0.299 + color.green() * 0.587 + color.blue() * 0.114
+            text_col = 'black' if lum > 128 else 'white'
+            self.btn_text_color.setStyleSheet(f'background-color: {color.name()}; color: {text_col};')
+            self.update_text_preview()
+
+    def set_text_h_align(self, align):
+        if self.chk_free_stretch.isChecked() and self.text_preview.lines_data:
+            idx = self.text_preview.selected_line_idx
+            if 0 <= idx < len(self.text_preview.lines_data):
+                rect = self.text_preview.lines_data[idx]['rect']
+                m = self.sb_t_margin.value()
+                w = rect.width()
+                if align == Qt.AlignLeft:
+                    rect.moveLeft(m)
+                elif align == Qt.AlignHCenter:
+                    paper_w = self.text_preview.paper_w
+                    avail_w = paper_w - 2 * m
+                    rect.moveLeft(m + (avail_w - w) / 2)
+                elif align == Qt.AlignRight:
+                    rect.moveRight(self.text_preview.paper_w - m)
+                self.text_preview.update()
+        else:
+            self.text_h_align = align
+            self.text_align = self.text_h_align | self.text_v_align
+            self.update_text_preview()
+
+    def set_text_v_align(self, align):
+        if self.chk_free_stretch.isChecked() and self.text_preview.lines_data:
+            idx = self.text_preview.selected_line_idx
+            if 0 <= idx < len(self.text_preview.lines_data):
+                rect = self.text_preview.lines_data[idx]['rect']
+                m = self.sb_t_margin.value()
+                h = rect.height()
+                if align == Qt.AlignTop:
+                    rect.moveTop(m)
+                elif align == Qt.AlignVCenter:
+                    paper_h = self.text_preview.paper_h
+                    avail_h = paper_h - 2 * m
+                    rect.moveTop(m + (avail_h - h) / 2)
+                elif align == Qt.AlignBottom:
+                    rect.moveBottom(self.text_preview.paper_h - m)
+                self.text_preview.update()
+        else:
+            self.text_v_align = align
+            self.text_align = self.text_h_align | self.text_v_align
+            self.update_text_preview()
+
+    def change_api_key(self):
+        from PyQt5.QtWidgets import QInputDialog, QLineEdit, QMessageBox
+        pwd, ok_pwd = QInputDialog.getText(self, 'ទាមទារលេខសម្ងាត់ / Password Required', 'សូមបញ្ចូលលេខសម្ងាត់ ដើម្បីផ្លាស់ប្តូរ API Key៖', QLineEdit.Password)
+        if not ok_pwd:
+            return
+        if pwd != '1234':
+            QMessageBox.warning(self, 'បរាជ័យ / Error', 'លេខសម្ងាត់មិនត្រឹមត្រូវទេ! / Incorrect Password!')
+            return
+        current_key = self.settings.value('gemini_api_key', '')
+        api_key, ok = QInputDialog.getText(self, 'ផ្លាស់ប្តូរ Gemini API Key / Change API Key', 'សូមបញ្ចូល Google Gemini API Key ថ្មីរបស់អ្នក៖\n(ទុកចំហរទទេដើម្បីលុប Key ចាស់ចេញ)', QLineEdit.Password, current_key)
+        if ok:
+            self.settings.setValue('gemini_api_key', api_key.strip())
+            QMessageBox.information(self, 'ជោគជ័យ / Success', 'API Key ត្រូវបានកែប្រែដោយជោគជ័យ! / API Key has been updated!')
+
+    def process_ocr_from_file(self, file_name):
+        from PyQt5.QtWidgets import QInputDialog, QLineEdit, QMessageBox
+        api_key = self.settings.value('gemini_api_key', '')
+        if not api_key:
+            api_key, ok = QInputDialog.getText(self, 'Gemini API Key Required', 'សូមបញ្ចូល Google Gemini API Key របស់អ្នក៖\n(អាចយកដោយឥតគិតថ្លៃពី aistudio.google.com/app/apikey)', QLineEdit.Password)
+            if ok and api_key.strip():
+                api_key = api_key.strip()
+                self.settings.setValue('gemini_api_key', api_key)
+            else:
+                return
+        dialog = ImageCropDialog(file_name, self)
+        if dialog.exec_():
+            final_image_path = dialog.get_cropped_image()
+            self.btn_ai_ocr.setText('កំពុងទាញអត្ថបទ... / Processing...')
+            self.btn_ai_ocr.setEnabled(False)
+            selected_model = self.cb_ai_model.currentText()
+            self.ocr_worker = OCRWorker(final_image_path, api_key, selected_model)
+            self.ocr_worker.finished_signal.connect(self.on_ocr_success)
+            self.ocr_worker.error_signal.connect(self.on_ocr_error)
+            self.ocr_worker.start()
+
+    def extract_text_from_image(self):
+        from PyQt5.QtWidgets import QFileDialog, QDialog
+        from PyQt5.QtCore import QSettings
+        import os
+        settings = QSettings('PhotoPrintApp', 'Settings')
+        last_dir = settings.value('last_open_dir', '')
+        file_name, _ = QFileDialog.getOpenFileName(self, 'ជ្រើសរើសរូបភាព ឬ PDF / Select Image or PDF', last_dir, 'Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)')
+        if file_name:
+            settings.setValue('last_open_dir', os.path.dirname(file_name))
+            if file_name.lower().endswith('.pdf'):
+                dialog = PdfImportDialog(file_name, self)
+                if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
+                    self.process_ocr_from_file(dialog.temp_image_path)
+            else:
+                self.process_ocr_from_file(file_name)
+
+    def on_ocr_success(self, text):
+        self.btn_ai_ocr.setText('ទាញអត្ថបទពីរូបភាព (AI) / Extract Text from Image')
+        self.btn_ai_ocr.setEnabled(True)
+        current_text = self.txt_banner.toPlainText().strip()
+        if current_text:
+            self.txt_banner.setText(current_text + '\n' + text.strip())
+        else:
+            self.txt_banner.setText(text.strip())
+
+    def on_ocr_error(self, error_msg):
+        from PyQt5.QtWidgets import QMessageBox
+        self.btn_ai_ocr.setText('ទាញអត្ថបទពីរូបភាព (AI) / Extract Text from Image')
+        self.btn_ai_ocr.setEnabled(True)
+        if 'API_KEY_INVALID' in error_msg or '403' in error_msg or '400' in error_msg:
+            self.settings.remove('gemini_api_key')
+            QMessageBox.critical(self, 'API Key Error', 'API Key មិនត្រឹមត្រូវ ឬមានបញ្ហា។ សូមសាកល្បងម្ដងទៀត។\n\n' + error_msg)
+        else:
+            QMessageBox.critical(self, 'Error', f'មានបញ្ហាក្នុងការទាញអត្ថបទ៖\n{error_msg}')
+
+    def save_text_pdf(self, show_msg=True):
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+        from PyQt5.QtGui import QPdfWriter, QPageSize, QPageLayout, QPainter
+        from PyQt5.QtCore import QSizeF, QMarginsF, Qt, QRectF
+        import os
+        from datetime import datetime
+        file_name = ''
+        if hasattr(self, 'default_pdf_folder') and self.default_pdf_folder and os.path.isdir(self.default_pdf_folder):
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            file_name = os.path.join(self.default_pdf_folder, f'TextBanner_{timestamp}.pdf')
+        else:
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(self, 'រក្សាទុកជា PDF / Save as PDF', '', 'PDF Files (*.pdf)', options=options)
+        if not file_name:
+            return None
+        pdf_writer = QPdfWriter(file_name)
+        paper_w = self.text_preview.paper_w
+        paper_h = self.text_preview.paper_h
+        pdf_writer.setPageSize(QPageSize(QSizeF(paper_w, paper_h), QPageSize.Millimeter))
+        pdf_writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+        pdf_writer.setResolution(300)
+        painter = QPainter(pdf_writer)
+        painter.setRenderHint(QPainter.Antialiasing)
+        scale = 300 / 25.4
+        painter.fillRect(0, 0, int(paper_w * scale), int(paper_h * scale), self.bg_color)
+        if self.text_preview.text:
+            painter.setPen(self.text_color)
+            if self.chk_free_stretch.isChecked():
+                from PyQt5.QtGui import QTextDocument
+                lines = self.text_preview.text.split('\n')
+                for i, line in enumerate(lines):
+                    if i >= len(self.text_preview.lines_data):
+                        break
+                    line_data = self.text_preview.lines_data[i]
+                    rect_mm = line_data['rect']
+                    rect_px = QRectF(rect_mm.x() * scale, rect_mm.y() * scale, rect_mm.width() * scale, rect_mm.height() * scale)
+                    bg_color = line_data.get('bg_color', QColor(Qt.transparent))
+                    if bg_color.alpha() > 0:
+                        painter.fillRect(rect_px, bg_color)
+                    f_kh = line_data.get('font_kh', self.text_preview.font_family_kh)
+                    f_en = line_data.get('font_en', self.text_preview.font_family_en)
+                    is_b = line_data.get('bold', False)
+                    is_i = line_data.get('italic', False)
+                    is_u = line_data.get('underline', False)
+                    l_color = line_data.get('color', self.text_color)
+                    doc = QTextDocument()
+                    doc.setDocumentMargin(0)
+                    html = build_mixed_html(line, f_kh, f_en, l_color, None, is_b, is_i, is_u, Qt.AlignLeft, 100)
+                    doc.setHtml(html)
+                    base_rect = doc.documentLayout().documentSize()
+                    painter.save()
+                    painter.translate(rect_px.x(), rect_px.y())
+                    sx = rect_px.width() / base_rect.width() if base_rect.width() > 0 else 1
+                    sy = rect_px.height() / base_rect.height() if base_rect.height() > 0 else 1
+                    painter.scale(sx, sy)
+                    doc.drawContents(painter)
+                    painter.restore()
+            else:
+                m = self.sb_t_margin.value()
+                m_px = m * scale
+                rect = QRectF(m_px, m_px, (paper_w - 2 * m) * scale, (paper_h - 2 * m) * scale)
+                from PyQt5.QtGui import QTextDocument
+                doc = QTextDocument()
+                doc.setDocumentMargin(0)
+                if hasattr(self.text_preview, 'text_bg_color') and self.text_preview.text_bg_color.alpha() > 0:
+                    painter.fillRect(rect, self.text_preview.text_bg_color)
+                if self.chk_auto_fit.isChecked():
+                    min_size = 1
+                    max_size = 5000
+                    best_size = min_size
+                    while min_size <= max_size:
+                        mid_size = (min_size + max_size) // 2
+                        html = build_mixed_html(self.text_preview.text, self.text_preview.font_family_kh, self.text_preview.font_family_en, self.text_preview.text_color, None, self.text_preview.font_bold, self.text_preview.font_italic, self.text_preview.font_underline, self.text_align, mid_size)
+                        doc.setHtml(html)
+                        doc.setTextWidth(rect.width())
+                        if doc.size().height() <= rect.height():
+                            best_size = mid_size
+                            min_size = mid_size + 1
+                        else:
+                            max_size = mid_size - 1
+                    html = build_mixed_html(self.text_preview.text, self.text_preview.font_family_kh, self.text_preview.font_family_en, self.text_preview.text_color, None, self.text_preview.font_bold, self.text_preview.font_italic, self.text_preview.font_underline, self.text_align, best_size)
+                    doc.setHtml(html)
+                    doc.setTextWidth(rect.width())
+                else:
+                    pt_to_mm = 25.4 / 72.0
+                    size_mm = self.text_preview.base_font_size * pt_to_mm
+                    size_px = size_mm * scale
+                    html = build_mixed_html(self.text_preview.text, self.text_preview.font_family_kh, self.text_preview.font_family_en, self.text_preview.text_color, None, self.text_preview.font_bold, self.text_preview.font_italic, self.text_preview.font_underline, self.text_align, int(max(1, size_px)))
+                    doc.setHtml(html)
+                    doc.setTextWidth(rect.width())
+                painter.save()
+                painter.translate(rect.topLeft())
+                doc.drawContents(painter)
+                painter.restore()
+        painter.end()
+        if show_msg:
+            QMessageBox.information(self, 'ជោគជ័យ / Success', 'ឯកសារ PDF ត្រូវបានរក្សាទុកដោយជោគជ័យ! / PDF saved successfully!')
+        return file_name
+
+    def import_text_to_foxit(self):
+        import subprocess
+        from PyQt5.QtWidgets import QMessageBox
+        import os
+        if not hasattr(self, 'foxit_path') or not self.foxit_path or (not os.path.exists(self.foxit_path)):
+            QMessageBox.warning(self, 'មិនទាន់កំណត់កម្មវិធី / Not Configured', 'សូមចូលទៅកាន់ Settings (⚙) ដើម្បីកំណត់ទីតាំងកម្មវិធី Foxit PDF ជាមុនសិន។')
+            return
+        file_name = self.save_text_pdf(show_msg=False)
+        if file_name:
+            try:
+                subprocess.Popen([self.foxit_path, file_name])
+            except Exception as e:
+                QMessageBox.critical(self, 'កំហុស / Error', f'មិនអាចបើកកម្មវិធី Foxit PDF បានទេ:\n{str(e)}')
+
+    def go_to_previous_page(self):
+        if self.current_page_index > 0:
+            self.current_page_index -= 1
+            self.stacked_widget.setCurrentIndex(self.current_page_index)
+            self.update_pagination_ui()
+
+    def go_to_next_page(self):
+        if self.current_page_index < len(self.preview_canvases) - 1:
+            self.current_page_index += 1
+            self.stacked_widget.setCurrentIndex(self.current_page_index)
+            self.update_pagination_ui()
+
+    def update_pagination_ui(self):
+        total_pages = len(self.preview_canvases)
+        if total_pages <= 1:
+            self.pagination_widget.setVisible(False)
+        else:
+            self.pagination_widget.setVisible(True)
+            self.lbl_page_info.setText(f'ទំព័រ / Page: {self.current_page_index + 1} / {total_pages}')
+            self.btn_prev_page.setEnabled(self.current_page_index > 0)
+            self.btn_next_page.setEnabled(self.current_page_index < total_pages - 1)
+
+    def align_selected_left(self):
+        for c in self.preview_canvases:
+            c.align_left()
+
+    def align_selected_top(self):
+        for c in self.preview_canvases:
+            c.align_top()
+
+    def align_selected_right(self):
+        for c in self.preview_canvases:
+            c.align_right()
+
+    def align_selected_bottom(self):
+        for c in self.preview_canvases:
+            c.align_bottom()
+
+    def distribute_horizontally(self):
+        for c in self.preview_canvases:
+            c.distribute_horizontally()
+
+    def distribute_vertically(self):
+        for c in self.preview_canvases:
+            c.distribute_vertically()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Delete:
+            self.clear_selected_image()
+        elif event.key() == Qt.Key_R:
+            for c in self.preview_canvases:
+                c.rotate_selected_photos()
+        elif event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
+            if event.modifiers() & Qt.ControlModifier:
+                step = 20 if event.modifiers() & Qt.ShiftModifier else 5
+                if event.key() == Qt.Key_Up:
+                    for c in self.preview_canvases:
+                        c.pan_selected_photos(0, -step)
+                elif event.key() == Qt.Key_Down:
+                    for c in self.preview_canvases:
+                        c.pan_selected_photos(0, step)
+                elif event.key() == Qt.Key_Left:
+                    for c in self.preview_canvases:
+                        c.pan_selected_photos(-step, 0)
+                elif event.key() == Qt.Key_Right:
+                    for c in self.preview_canvases:
+                        c.pan_selected_photos(step, 0)
+            else:
+                step = 5.0 if event.modifiers() & Qt.ShiftModifier else 0.5
+                if event.key() == Qt.Key_Up:
+                    for c in self.preview_canvases:
+                        c.nudge_selected_photos(0, -step)
+                elif event.key() == Qt.Key_Down:
+                    for c in self.preview_canvases:
+                        c.nudge_selected_photos(0, step)
+                elif event.key() == Qt.Key_Left:
+                    for c in self.preview_canvases:
+                        c.nudge_selected_photos(-step, 0)
+                elif event.key() == Qt.Key_Right:
+                    for c in self.preview_canvases:
+                        c.nudge_selected_photos(step, 0)
+        else:
+            super().keyPressEvent(event)
+
+    def change_paper_size(self):
+        size_text = self.cb_paper_size.currentText()
+        if 'A4' in size_text:
+            self.sb_width.setValue(210.0)
+            self.sb_height.setValue(297.0)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        elif 'A3' in size_text:
+            self.sb_width.setValue(297.0)
+            self.sb_height.setValue(420.0)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        elif 'A5' in size_text:
+            self.sb_width.setValue(148.0)
+            self.sb_height.setValue(210.0)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        elif 'Letter' in size_text:
+            self.sb_width.setValue(215.9)
+            self.sb_height.setValue(279.4)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        elif '10x15' in size_text:
+            self.sb_width.setValue(100.0)
+            self.sb_height.setValue(150.0)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        elif '13x18' in size_text:
+            self.sb_width.setValue(130.0)
+            self.sb_height.setValue(180.0)
+            self.sb_width.setEnabled(False)
+            self.sb_height.setEnabled(False)
+        else:
+            self.sb_width.setEnabled(True)
+            self.sb_height.setEnabled(True)
+        self.change_orientation()
+
+    def change_orientation(self):
+        w = self.sb_width.value()
+        h = self.sb_height.value()
+        if self.rb_port.isChecked() and w > h:
+            self.sb_width.setValue(h)
+            self.sb_height.setValue(w)
+        elif self.rb_land.isChecked() and h > w:
+            self.sb_width.setValue(h)
+            self.sb_height.setValue(w)
+
+    def reverse_photo_size(self):
+        for g in self.size_groups:
+            w = g['w'].value()
+            h = g['h'].value()
+            g['w'].setValue(h)
+            g['h'].setValue(w)
+
+    def load_image(self):
+        from PyQt5.QtCore import QSettings
+        import os
+        settings = QSettings('PhotoPrintApp', 'Settings')
+        last_dir = settings.value('last_open_dir', '')
+        options = QFileDialog.Options()
+        file_names, _ = QFileDialog.getOpenFileNames(self, 'ជ្រើសរើសរូបភាព ឬ PDF / Choose Photos or PDF', last_dir, 'Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)', options=options)
+        if not file_names:
+            return
+        settings.setValue('last_open_dir', os.path.dirname(file_names[0]))
+        valid_files = []
+        from PyQt5.QtWidgets import QDialog
+        for f in file_names:
+            if f.lower().endswith('.pdf'):
+                dialog = PdfImportDialog(f, self)
+                if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
+                    valid_files.append(dialog.temp_image_path)
+            else:
+                valid_files.append(f)
+        if not valid_files:
+            return
+        self.loaded_images = valid_files
+        self.btn_clear.setVisible(True)
+        if len(valid_files) == 1:
+            self.default_image_pixmap = QPixmap(valid_files[0])
+            self.lbl_image_status.setText(f"<i>បានជ្រើសរើស: {valid_files[0].split('/')[-1]}</i>")
+        else:
+            self.default_image_pixmap = None
+            self.lbl_image_status.setText(f'<i>បានជ្រើសរើសរូបភាពចំនួន {len(valid_files)} ឯកសារ</i>')
+        self.calculate_layout()
+
+    def clear_image(self):
+        self.loaded_images = []
+        self.default_image_pixmap = None
+        self.lbl_image_status.setText('<i>មិនទាន់មានរូបភាព / No image loaded</i>')
+        self.btn_clear.setVisible(False)
+        self.calculate_layout()
+
+    def toggle_auto_center(self):
+        is_h = self.chk_center_h.isChecked()
+        self.sb_margin_left.setEnabled(not is_h)
+        self.sb_margin_right.setEnabled(not is_h)
+        is_v = self.chk_center_v.isChecked()
+        self.sb_margin_top.setEnabled(not is_v)
+        self.sb_margin_bottom.setEnabled(not is_v)
+        self.calculate_layout()
+
+    def toggle_border(self):
+        for canvas in self.preview_canvases:
+            canvas.show_border = self.chk_show_border.isChecked()
+            canvas.update()
+
+    def on_border_slider_changed(self, value):
+        self.sb_border_weight.blockSignals(True)
+        self.sb_border_weight.setValue(value / 10.0)
+        self.sb_border_weight.blockSignals(False)
+        self.change_border_weight()
+
+    def on_border_spinbox_changed(self, value):
+        self.sl_border_weight.blockSignals(True)
+        self.sl_border_weight.setValue(int(value * 10))
+        self.sl_border_weight.blockSignals(False)
+        self.change_border_weight()
+
+    def change_border_weight(self):
+        weight = self.sb_border_weight.value()
+        for canvas in self.preview_canvases:
+            canvas.border_weight = weight
+            canvas.update()
+
+    def toggle_manual_mode(self):
+        is_manual = self.rb_manual_layout.isChecked()
+        self.lbl_manual_tip.setVisible(is_manual)
+        self.wg_align.setVisible(is_manual)
+        for canvas in self.preview_canvases:
+            canvas.is_manual = is_manual
+        self.calculate_layout()
+
+    def change_image_mode(self):
+        is_cover = self.rb_img_cover.isChecked()
+        self.lbl_cover_tip.setVisible(is_cover)
+        self.update_image_adjustment_buttons()
+        if not is_cover:
+            for canvas in self.preview_canvases:
+                for p in canvas.photo_positions:
+                    p['selected'] = False
+        mode = 'fill'
+        if getattr(self, 'chk_enable_grid', None) and self.chk_enable_grid.isChecked() and getattr(self, 'rb_grid_original_size', None) and self.rb_grid_original_size.isChecked():
+            mode = 'contain'
+        elif self.rb_img_fill.isChecked():
+            mode = 'fill'
+        elif is_cover:
+            mode = 'cover'
+        elif self.rb_img_contain.isChecked():
+            mode = 'contain'
+        for canvas in self.preview_canvases:
+            canvas.image_mode = mode
+            canvas.update()
+
+    def update_image_adjustment_buttons(self):
+        has_selection = any((p.get('selected', False) for canvas in self.preview_canvases for p in canvas.photo_positions))
+        self.btn_change_selected_image.setEnabled(has_selection)
+        has_default = hasattr(self, 'default_image_pixmap') and self.default_image_pixmap is not None and (not self.default_image_pixmap.isNull())
+        self.btn_reset_selected_image.setEnabled(has_selection and has_default)
+        self.lbl_adj_tip.setVisible(not has_selection)
+
+    def select_all_photos(self):
+        for canvas in self.preview_canvases:
+            for p in canvas.photo_positions:
+                p['selected'] = True
+            canvas.update()
+        self.update_image_adjustment_buttons()
+
+    def deselect_all_photos(self):
+        for canvas in self.preview_canvases:
+            for p in canvas.photo_positions:
+                p['selected'] = False
+            canvas.update()
+        self.update_image_adjustment_buttons()
+
+    def change_selected_image(self):
+        from PyQt5.QtCore import QSettings
+        import os
+        settings = QSettings('PhotoPrintApp', 'Settings')
+        last_dir = settings.value('last_open_dir', '')
+        options = QFileDialog.Options()
+        file_names, _ = QFileDialog.getOpenFileNames(self, 'ជ្រើសរើសរូបភាពថ្មី / Choose New Photos', last_dir, 'Images (*.png *.jpg *.jpeg *.bmp)', options=options)
+        if file_names:
+            settings.setValue('last_open_dir', os.path.dirname(file_names[0]))
+            selected_slots = [p for canvas in self.preview_canvases for p in canvas.photo_positions if p.get('selected', False)]
+            for i, file_path in enumerate(file_names):
+                if i < len(selected_slots):
+                    new_pixmap = QPixmap(file_path)
+                    if not new_pixmap.isNull():
+                        selected_slots[i]['image_pixmap'] = new_pixmap
+            for canvas in self.preview_canvases:
+                canvas.update()
+            self.update_image_adjustment_buttons()
+
+    def reset_selected_image(self):
+        if hasattr(self, 'default_image_pixmap') and self.default_image_pixmap and (not self.default_image_pixmap.isNull()):
+            for canvas in self.preview_canvases:
+                for p in canvas.photo_positions:
+                    if p.get('selected', False):
+                        p['image_pixmap'] = self.default_image_pixmap
+                canvas.update()
+            self.update_image_adjustment_buttons()
+        else:
+            self.clear_selected_image()
+
+    def clear_selected_image(self):
+        for canvas in self.preview_canvases:
+            for p in canvas.photo_positions:
+                if p.get('selected', False):
+                    p['image_pixmap'] = None
+                    p['scale'] = 1.0
+                    p['pan_x'] = 0.0
+                    p['pan_y'] = 0.0
+            canvas.update()
+        self.update_image_adjustment_buttons()
+
+    def toggle_grid_mode(self):
+        is_grid = self.chk_enable_grid.isChecked()
+        self.sb_grid_cols.setEnabled(is_grid)
+        self.sb_grid_rows.setEnabled(is_grid)
+        self.rb_grid_same_size.setEnabled(is_grid)
+        self.rb_grid_original_size.setEnabled(is_grid)
+        self.cb_p_unit.setEnabled(not is_grid)
+        self.sb_dpi.setEnabled(not is_grid)
+        for g in self.size_groups:
+            g['chk'].setEnabled(not is_grid)
+            g['w'].setEnabled(not is_grid)
+            g['h'].setEnabled(not is_grid)
+            g['qty'].setEnabled(not is_grid)
+        self.calculate_layout()
+
+    def calculate_layout(self, *args):
+        paper_w = self.sb_width.value()
+        paper_h = self.sb_height.value()
+        unit = self.cb_p_unit.currentText()
+        current_dpi = self.sb_dpi.value()
+        active_configs = []
+        total_print_qty = 0
+        photo_w, photo_h = (30.0, 40.0)
+        val_w, val_h = (3.0, 4.0)
+        margin_t = self.sb_margin_top.value()
+        margin_b = self.sb_margin_bottom.value()
+        margin_l = self.sb_margin_left.value()
+        margin_r = self.sb_margin_right.value()
+        gap = self.sb_gap.value()
+        if getattr(self, 'chk_enable_grid', None) and self.chk_enable_grid.isChecked():
+            cols = self.sb_grid_cols.value()
+            rows = self.sb_grid_rows.value()
+            is_orig = self.rb_grid_original_size.isChecked()
+            if is_orig and hasattr(self, 'loaded_images') and self.loaded_images:
+                avail_w = paper_w - (margin_l + margin_r) - (cols - 1) * gap
+                avail_h = paper_h - (margin_t + margin_b) - (rows - 1) * gap
+                cell_w = avail_w / cols if cols > 0 else 10.0
+                cell_h = avail_h / rows if rows > 0 else 10.0
+                if len(self.loaded_images) == 1:
+                    active_configs.append({'w': cell_w, 'h': cell_h, 'qty': cols * rows, 'label': 'Original'})
+                    is_fill_single_page = True
+                else:
+                    active_configs.append({'w': cell_w, 'h': cell_h, 'qty': max(cols * rows, len(self.loaded_images)), 'label': 'Original'})
+            else:
+                avail_w = paper_w - (margin_l + margin_r) - (cols - 1) * gap
+                avail_h = paper_h - (margin_t + margin_b) - (rows - 1) * gap
+                photo_w = avail_w / cols if cols > 0 else 10.0
+                photo_h = avail_h / rows if rows > 0 else 10.0
+                val_w, val_h = (photo_w, photo_h)
+                qty = cols * rows
+                active_configs.append({'w': photo_w, 'h': photo_h, 'qty': qty, 'label': f'Grid {cols}x{rows}'})
+                total_print_qty += qty
+        else:
+            for g in self.size_groups:
+                if g['chk'].isChecked() and g['qty'].value() > 0:
+                    vw, vh = (g['w'].value(), g['h'].value())
+                    if unit == 'cm':
+                        pw, ph = (vw * 10, vh * 10)
+                    elif unit == 'mm':
+                        pw, ph = (vw, vh)
+                    elif unit == 'inch':
+                        pw, ph = (vw * 25.4, vh * 25.4)
+                    elif unit == 'pixel':
+                        pw, ph = (vw * (25.4 / current_dpi), vh * (25.4 / current_dpi))
+                    active_configs.append({'w': pw, 'h': ph, 'qty': g['qty'].value(), 'label': f'{vw:g}x{vh:g} {unit}'})
+                    total_print_qty += g['qty'].value()
+                    if len(active_configs) == 1:
+                        photo_w, photo_h, val_w, val_h = (pw, ph, vw, vh)
+        avail_w = paper_w - (margin_l + margin_r)
+        avail_h = paper_h - (margin_t + margin_b)
+        items_to_place = []
+        is_fill_single_page = False
+        if self.rb_max_qty.isChecked() and len(active_configs) == 1:
+            if hasattr(self, 'loaded_images') and self.loaded_images:
+                if len(self.loaded_images) == 1:
+                    active_configs[0]['qty'] = 1000
+                    is_fill_single_page = True
+                else:
+                    active_configs[0]['qty'] = len(self.loaded_images)
+            else:
+                active_configs[0]['qty'] = 1000
+                is_fill_single_page = True
+        for config in active_configs:
+            for _ in range(config['qty']):
+                items_to_place.append(config)
+        while self.stacked_widget.count() > 0:
+            widget = self.stacked_widget.widget(0)
+            self.stacked_widget.removeWidget(widget)
+            widget.deleteLater()
+        self.preview_canvases.clear()
+        remaining_items = items_to_place
+        page_index = 0
+        total_placed_qty = 0
+        while remaining_items or page_index == 0:
+            canvas = PreviewWidget()
+            canvas.selectionChanged.connect(self.update_image_adjustment_buttons)
+            if getattr(self, 'chk_enable_grid', None) and self.chk_enable_grid.isChecked():
+                canvas.grid_cols = self.sb_grid_cols.value()
+                canvas.grid_rows = self.sb_grid_rows.value()
+            else:
+                canvas.grid_cols = 0
+                canvas.grid_rows = 0
+            canvas.paper_w = paper_w
+            canvas.paper_h = paper_h
+            canvas.photo_w = photo_w
+            canvas.photo_h = photo_h
+            canvas.size_label = f'{val_w:g}x{val_h:g} {unit}'
+            canvas.margin_top = margin_t
+            canvas.margin_bottom = margin_b
+            canvas.margin_left = margin_l
+            canvas.margin_right = margin_r
+            canvas.offset_x = margin_l
+            canvas.offset_y = margin_t
+            canvas.gap = gap
+            canvas.optimize_fit = self.chk_optimize_fit.isChecked()
+            canvas.is_manual = self.rb_manual_layout.isChecked()
+            mode = 'fill'
+            if getattr(self, 'chk_enable_grid', None) and self.chk_enable_grid.isChecked() and getattr(self, 'rb_grid_original_size', None) and self.rb_grid_original_size.isChecked():
+                mode = 'contain'
+            elif self.rb_img_cover.isChecked():
+                mode = 'cover'
+            elif self.rb_img_contain.isChecked():
+                mode = 'contain'
+            canvas.image_mode = mode
+            canvas.show_border = self.chk_show_border.isChecked()
+            if page_index == 0:
+                remaining_items.sort(key=lambda x: max(x['w'], x['h']), reverse=True)
+            remaining_items = canvas.generate_grid(remaining_items)
+            total_placed_qty += len(canvas.photo_positions)
+            if self.chk_center_h.isChecked():
+                canvas.center_horizontally()
+            if self.chk_center_v.isChecked():
+                canvas.center_vertically()
+            container = QWidget()
+            container_layout = QVBoxLayout(container)
+            container_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+            container_layout.addWidget(canvas)
+            self.stacked_widget.addWidget(container)
+            self.preview_canvases.append(canvas)
+            page_index += 1
+            if is_fill_single_page:
+                break
+            if self.rb_manual_layout.isChecked():
+                break
+        if hasattr(self, 'loaded_images') and self.loaded_images:
+            if len(self.loaded_images) == 1:
+                pix = QPixmap(self.loaded_images[0])
+                for canvas in self.preview_canvases:
+                    for p in canvas.photo_positions:
+                        p['image_pixmap'] = pix if not pix.isNull() else None
+            else:
+                img_idx = 0
+                for canvas in self.preview_canvases:
+                    for p in canvas.photo_positions:
+                        if img_idx < len(self.loaded_images):
+                            pix = QPixmap(self.loaded_images[img_idx])
+                            p['image_pixmap'] = pix if not pix.isNull() else None
+                            img_idx += 1
+                        else:
+                            p['image_pixmap'] = None
+        if self.rb_max_qty.isChecked() and len(active_configs) == 1:
+            if is_fill_single_page:
+                total_print_qty = total_placed_qty
+            else:
+                total_print_qty = len(self.loaded_images) if hasattr(self, 'loaded_images') and self.loaded_images else total_placed_qty
+        else:
+            total_print_qty = total_placed_qty
+        ori_text = 'បញ្ឈរ (Portrait)' if self.rb_port.isChecked() else 'ផ្តេក (Landscape)'
+        self.lbl_status.setText(f'<b>ចំនួនសរុប: {total_print_qty} រូបភាព ({ori_text}) [ទំព័រ: {len(self.preview_canvases)}]</b>')
+        self.update_image_adjustment_buttons()
+        self.current_page_index = 0
+        if self.stacked_widget.count() > 0:
+            self.stacked_widget.setCurrentIndex(0)
+        self.update_pagination_ui()
+
+    def open_settings(self):
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout
+        dialog = QDialog(self)
+        dialog.setWindowTitle('ការកំណត់ / Settings')
+        dialog.resize(400, 150)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel('ទីតាំងរក្សាទុក PDF លំនាំដើម / Default PDF Save Folder:'))
+        h_layout = QHBoxLayout()
+        txt_folder = QLineEdit(self.default_pdf_folder if hasattr(self, 'default_pdf_folder') else '')
+        txt_folder.setReadOnly(True)
+        h_layout.addWidget(txt_folder)
+        btn_browse = QPushButton('ជ្រើសរើស / Browse')
+
+        def browse_folder():
+            folder = QFileDialog.getExistingDirectory(dialog, 'ជ្រើសរើសថតឯកសារ / Select Folder', txt_folder.text())
+            if folder:
+                txt_folder.setText(folder)
+        btn_browse.clicked.connect(browse_folder)
+        h_layout.addWidget(btn_browse)
+        layout.addLayout(h_layout)
+        layout.addWidget(QLabel('ទីតាំងកម្មវិធី Foxit PDF / Foxit PDF Path:'))
+        h_foxit_layout = QHBoxLayout()
+        txt_foxit = QLineEdit(self.foxit_path if hasattr(self, 'foxit_path') else '')
+        txt_foxit.setReadOnly(True)
+        h_foxit_layout.addWidget(txt_foxit)
+        btn_browse_foxit = QPushButton('ជ្រើសរើស / Browse')
+
+        def browse_foxit():
+            exe_file, _ = QFileDialog.getOpenFileName(dialog, 'ជ្រើសរើសកម្មវិធី Foxit / Select Foxit App', '', 'Executables (*.exe)')
+            if exe_file:
+                txt_foxit.setText(exe_file)
+        btn_browse_foxit.clicked.connect(browse_foxit)
+        h_foxit_layout.addWidget(btn_browse_foxit)
+        layout.addLayout(h_foxit_layout)
+        btn_layout = QHBoxLayout()
+        btn_save = QPushButton('រក្សាទុក / Save')
+
+        def save_settings():
+            self.default_pdf_folder = txt_folder.text()
+            self.settings.setValue('default_pdf_folder', self.default_pdf_folder)
+            self.foxit_path = txt_foxit.text()
+            self.settings.setValue('foxit_path', self.foxit_path)
+            dialog.accept()
+        btn_save.clicked.connect(save_settings)
+        btn_save.setStyleSheet('background-color: #128c7e; color: white; padding: 8px; font-weight: bold; border-radius: 4px;')
+        btn_cancel = QPushButton('បោះបង់ / Cancel')
+        btn_cancel.clicked.connect(dialog.reject)
+        btn_cancel.setStyleSheet('background-color: #ef4444; color: white; padding: 8px; font-weight: bold; border-radius: 4px;')
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_save)
+        layout.addLayout(btn_layout)
+        dialog.exec_()
+
+    def import_to_foxit(self):
+        import subprocess
+        from PyQt5.QtWidgets import QMessageBox
+        import os
+        if not hasattr(self, 'foxit_path') or not self.foxit_path or (not os.path.exists(self.foxit_path)):
+            QMessageBox.warning(self, 'មិនទាន់កំណត់កម្មវិធី / Not Configured', 'សូមចូលទៅកាន់ Settings (⚙) ដើម្បីកំណត់ទីតាំងកម្មវិធី Foxit PDF ជាមុនសិន។')
+            return
+        file_name = self.save_pdf(show_msg=False)
+        if file_name:
+            try:
+                subprocess.Popen([self.foxit_path, file_name])
+            except Exception as e:
+                QMessageBox.critical(self, 'កំហុស / Error', f'មិនអាចបើកកម្មវិធី Foxit PDF បានទេ:\n{str(e)}')
+
+    def save_pdf(self, show_msg=True):
+        from PyQt5.QtWidgets import QMessageBox
+        import os
+        from datetime import datetime
+        file_name = ''
+        if hasattr(self, 'default_pdf_folder') and self.default_pdf_folder and os.path.isdir(self.default_pdf_folder):
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            file_name = os.path.join(self.default_pdf_folder, f'Image_{timestamp}.pdf')
+        else:
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(self, 'រក្សាទុកជា PDF / Save as PDF', '', 'PDF Files (*.pdf)', options=options)
+        if not file_name:
+            return
+        from PyQt5.QtGui import QPdfWriter, QPageSize, QPageLayout, QPainter, QTransform
+        from PyQt5.QtCore import QSizeF, QMarginsF, Qt, QRectF
+        pdf_writer = QPdfWriter(file_name)
+        paper_w = self.sb_width.value()
+        paper_h = self.sb_height.value()
+        pdf_writer.setPageSize(QPageSize(QSizeF(paper_w, paper_h), QPageSize.Millimeter))
+        pdf_writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+        dpi = self.sb_dpi.value()
+        pdf_writer.setResolution(dpi)
+        painter = QPainter(pdf_writer)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        scale = dpi / 25.4
+        for i, canvas in enumerate(self.preview_canvases):
+            if i > 0:
+                pdf_writer.newPage()
+            painter.fillRect(0, 0, int(paper_w * scale), int(paper_h * scale), Qt.white)
+            for pos in canvas.photo_positions:
+                p_w, p_h = (pos.get('w', canvas.photo_w), pos.get('h', canvas.photo_h))
+                cell_w = p_w * scale
+                cell_h = p_h * scale
+                tw, th = (max(1, int(cell_w + 1)), max(1, int(cell_h + 1)))
+                cx = pos['x'] * scale
+                cy = pos['y'] * scale
+                current_pixmap = pos.get('image_pixmap')
+                target_rect = QRectF(cx, cy, cell_w, cell_h).toRect()
+                if target_rect.width() <= 0 or target_rect.height() <= 0:
+                    continue
+                if current_pixmap and (not current_pixmap.isNull()):
+                    manual_angle = pos.get('rotation_angle', 0)
+                    if manual_angle != 0:
+                        transform = QTransform().rotate(manual_angle)
+                        current_pixmap = current_pixmap.transformed(transform, Qt.SmoothTransformation)
+                    if canvas.optimize_fit and manual_angle == 0:
+                        img_w, img_h = (current_pixmap.width(), current_pixmap.height())
+                        if img_w != img_h and cell_w != cell_h:
+                            if (img_w > img_h) != (cell_w > cell_h):
+                                transform = QTransform().rotate(90)
+                                current_pixmap = current_pixmap.transformed(transform, Qt.SmoothTransformation)
+                    if canvas.image_mode == 'fill':
+                        painter.drawPixmap(target_rect, current_pixmap)
+                    elif canvas.image_mode == 'contain':
+                        pre_scaled_contain = current_pixmap.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        if pre_scaled_contain and (not pre_scaled_contain.isNull()):
+                            x_offset = (target_rect.width() - pre_scaled_contain.width()) // 2
+                            y_offset = (target_rect.height() - pre_scaled_contain.height()) // 2
+                            painter.drawPixmap(target_rect.x() + x_offset, target_rect.y() + y_offset, pre_scaled_contain)
+                    elif canvas.image_mode == 'cover':
+                        pre_scaled_cover = current_pixmap.scaled(tw, th, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                        if pre_scaled_cover and (not pre_scaled_cover.isNull()):
+                            img_scale = pos.get('scale', 1.0)
+                            pan_x = pos.get('pan_x', 0.0)
+                            pan_y = pos.get('pan_y', 0.0)
+                            screen_scale = canvas.paper_width_px / canvas.paper_w if canvas.paper_w > 0 else 1
+                            pdf_pan_x = pan_x * (scale / screen_scale) if screen_scale else 0
+                            pdf_pan_y = pan_y * (scale / screen_scale) if screen_scale else 0
+                            if img_scale > 1.0:
+                                new_w = int(pre_scaled_cover.width() * img_scale)
+                                new_h = int(pre_scaled_cover.height() * img_scale)
+                                if new_w < 8000 and new_h < 8000:
+                                    current_cover = pre_scaled_cover.scaled(new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                else:
+                                    current_cover = pre_scaled_cover
+                            else:
+                                current_cover = pre_scaled_cover
+                            base_crop_x = (current_cover.width() - target_rect.width()) / 2.0
+                            base_crop_y = (current_cover.height() - target_rect.height()) / 2.0
+                            crop_x = int(max(0, min(base_crop_x - pdf_pan_x, current_cover.width() - target_rect.width())))
+                            crop_y = int(max(0, min(base_crop_y - pdf_pan_y, current_cover.height() - target_rect.height())))
+                            cropped_pixmap = current_cover.copy(crop_x, crop_y, target_rect.width(), target_rect.height())
+                            if not cropped_pixmap.isNull():
+                                painter.drawPixmap(target_rect, cropped_pixmap)
+                    if getattr(canvas, 'show_border', False):
+                        from PyQt5.QtGui import QPen, QColor
+                        border_pt = getattr(canvas, 'border_weight', 0.5)
+                        border_px = border_pt * (25.4 / 72.0) * scale
+                        painter.setPen(QPen(QColor(0, 0, 0), max(0.0, border_px), Qt.SolidLine))
+                        painter.drawRect(target_rect)
+        painter.end()
+        if show_msg:
+            QMessageBox.information(self, 'ជោគជ័យ / Success', 'ឯកសារ PDF ត្រូវបានរក្សាទុកដោយជោគជ័យ! / PDF saved successfully!')
+        return file_name
+
+    def initIDCardUI(self, parent_widget):
+        from PyQt5.QtWidgets import QScrollArea
+        layout = QHBoxLayout(parent_widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        left_panel = QWidget()
+        left_panel.setFixedWidth(320)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setAlignment(Qt.AlignTop)
+        title_lbl = QLabel('<b>បោះពុម្ពកាតសម្គាល់ខ្លួន / ID Card Printer</b>')
+        title_lbl.setFont(QFont('Khmer OS Battambang', 12))
+        left_layout.addWidget(title_lbl)
+        gb_id = QGroupBox('១. បញ្ចូលរូបកាត / Load ID Card')
+        gb_id_layout = QVBoxLayout()
+        self.btn_load_front = QPushButton('បញ្ចូលរូបកាតមុខ / Load Front')
+        self.btn_load_front.setStyleSheet('background-color: #0084c7; color: white; padding: 10px; border-radius: 5px;')
+        self.btn_load_front.clicked.connect(self.load_id_front)
+        self.lbl_info_front = QLabel('')
+        self.lbl_info_front.setStyleSheet('color: gray; font-size: 11px;')
+        self.btn_load_back = QPushButton('បញ្ចូលរូបកាតក្រោយ / Load Back')
+        self.btn_load_back.setStyleSheet('background-color: #0084c7; color: white; padding: 10px; border-radius: 5px;')
+        self.btn_load_back.clicked.connect(self.load_id_back)
+        self.lbl_info_back = QLabel('')
+        self.lbl_info_back.setStyleSheet('color: gray; font-size: 11px;')
+        self.btn_swap_id = QPushButton('ឆ្លាស់ទីតាំងកាត / Swap Cards')
+        self.btn_swap_id.setStyleSheet('background-color: #f59e0b; color: white; padding: 10px; border-radius: 5px;')
+        self.btn_swap_id.clicked.connect(self.swap_id_cards)
+        self.btn_clear_id = QPushButton('លុបរូបកាត / Clear ID Cards')
+        self.btn_clear_id.setStyleSheet('background-color: #e74c3c; color: white; padding: 10px; border-radius: 5px;')
+        self.btn_clear_id.clicked.connect(self.clear_id_cards)
+        self.cb_id_filter = QComboBox()
+        self.cb_id_filter.addItems(['រូបដើម / Original', 'ពណ៌វេទមន្ត / Magic Color', 'ពណ៌ប្រផេះ / Grayscale', 'ស-ខ្មៅ / B&W Scan'])
+        self.cb_id_filter.currentIndexChanged.connect(self.apply_id_filters)
+        self.chk_id_ai = QCheckBox('ប្រើប្រាស់ AI បង្កើនភាពច្បាស់ (AI Enhance)')
+        self.chk_id_ai.setStyleSheet('color: #d946ef; font-weight: bold;')
+        self.chk_id_ai.stateChanged.connect(self.apply_id_filters)
+        self.chk_id_rounded = QCheckBox('✂️ កាត់ស៊ុមគែមកោងកាត (Rounded Corners)')
+        self.chk_id_rounded.setChecked(True)
+        self.chk_id_rounded.setStyleSheet('color: #0ea5e9; font-weight: bold;')
+        self.chk_id_rounded.stateChanged.connect(self.update_id_preview)
+        gb_id_layout.addWidget(self.btn_load_front)
+        gb_id_layout.addWidget(self.lbl_info_front)
+        gb_id_layout.addWidget(self.btn_load_back)
+        gb_id_layout.addWidget(self.lbl_info_back)
+        gb_id_layout.addWidget(self.btn_swap_id)
+        gb_id_layout.addWidget(QLabel('ប្រភេទពណ៌ / Color Filter:'))
+        gb_id_layout.addWidget(self.cb_id_filter)
+        gb_id_layout.addWidget(self.chk_id_ai)
+        gb_id_layout.addWidget(self.chk_id_rounded)
+        gb_id_layout.addWidget(self.btn_clear_id)
+        gb_id.setLayout(gb_id_layout)
+        left_layout.addWidget(gb_id)
+        gb_paper = QGroupBox('២. ទំហំក្រដាស / Paper Size')
+        gb_paper_layout = QVBoxLayout()
+        self.cb_id_paper = QComboBox()
+        self.cb_id_paper.addItems(['A4 (210 x 297 mm)', 'A5 (148 x 210 mm)', 'ក្រដាសរូបថត (10x15 cm)'])
+        self.cb_id_paper.currentIndexChanged.connect(self.update_id_preview)
+        gb_paper_layout.addWidget(self.cb_id_paper)
+        gb_paper.setLayout(gb_paper_layout)
+        left_layout.addWidget(gb_paper)
+        gb_size = QGroupBox('៣. ទំហំកាត / Card Size (mm)')
+        gb_size_layout = QHBoxLayout()
+        self.sb_id_w = QDoubleSpinBox()
+        self.sb_id_w.setRange(10, 300)
+        self.sb_id_w.setValue(85.6)
+        self.sb_id_w.setSuffix(' mm')
+        self.sb_id_h = QDoubleSpinBox()
+        self.sb_id_h.setRange(10, 300)
+        self.sb_id_h.setValue(54.0)
+        self.sb_id_h.setSuffix(' mm')
+        self.btn_id_ratio_lock = QPushButton('🔒')
+        self.btn_id_ratio_lock.setCheckable(True)
+        self.btn_id_ratio_lock.setChecked(True)
+        self.btn_id_ratio_lock.setFixedWidth(30)
+        self.btn_id_ratio_lock.setToolTip('ចាក់សោរទំហំ (Lock Aspect Ratio)')
+        self.id_ratio = 85.6 / 54.0
+
+        def toggle_ratio(checked):
+            if checked:
+                self.btn_id_ratio_lock.setText('🔒')
+                if self.sb_id_h.value() > 0:
+                    self.id_ratio = self.sb_id_w.value() / self.sb_id_h.value()
+            else:
+                self.btn_id_ratio_lock.setText('🔓')
+
+        def w_changed(val):
+            if self.btn_id_ratio_lock.isChecked():
+                self.sb_id_h.blockSignals(True)
+                self.sb_id_h.setValue(val / self.id_ratio)
+                self.sb_id_h.blockSignals(False)
+            self.update_id_preview()
+
+        def h_changed(val):
+            if self.btn_id_ratio_lock.isChecked():
+                self.sb_id_w.blockSignals(True)
+                self.sb_id_w.setValue(val * self.id_ratio)
+                self.sb_id_w.blockSignals(False)
+            self.update_id_preview()
+        self.btn_id_ratio_lock.toggled.connect(toggle_ratio)
+        self.sb_id_w.valueChanged.connect(w_changed)
+        self.sb_id_h.valueChanged.connect(h_changed)
+        gb_size_layout.addWidget(QLabel('ទទឹង (W):'))
+        gb_size_layout.addWidget(self.sb_id_w)
+        gb_size_layout.addWidget(self.btn_id_ratio_lock)
+        gb_size_layout.addWidget(QLabel('កម្ពស់ (H):'))
+        gb_size_layout.addWidget(self.sb_id_h)
+        gb_size.setLayout(gb_size_layout)
+        left_layout.addWidget(gb_size)
+        gb_qty = QGroupBox('៤. ចំនួនបោះពុម្ព / Print Quantity')
+        gb_qty_layout = QVBoxLayout()
+        self.sb_id_qty = QSpinBox()
+        self.sb_id_qty.setRange(1, 50)
+        self.sb_id_qty.setValue(1)
+        self.sb_id_qty.valueChanged.connect(self.update_id_preview)
+        gb_qty_layout.addWidget(self.sb_id_qty)
+        gb_qty.setLayout(gb_qty_layout)
+        left_layout.addWidget(gb_qty)
+        gb_margin = QGroupBox('៥. តម្រឹមកាត / Alignment & Margin')
+        gb_margin_layout = QGridLayout()
+        btn_center_h = QPushButton('កណ្តាល (ផ្ដេក)')
+        btn_center_h.clicked.connect(self.id_center_h)
+        btn_center_v = QPushButton('កណ្តាល (បញ្ឈរ)')
+        btn_center_v.clicked.connect(self.id_center_v)
+        btn_align_left = QPushButton('គែមឆ្វេង (Left)')
+        btn_align_left.clicked.connect(self.id_align_left)
+        btn_align_right = QPushButton('គែមស្តាំ (Right)')
+        btn_align_right.clicked.connect(self.id_align_right)
+        btn_align_top = QPushButton('គែមលើ (Top)')
+        btn_align_top.clicked.connect(self.id_align_top)
+        btn_align_bottom = QPushButton('គែមក្រោម (Bottom)')
+        btn_align_bottom.clicked.connect(self.id_align_bottom)
+        gb_margin_layout.addWidget(btn_center_h, 0, 0)
+        gb_margin_layout.addWidget(btn_center_v, 0, 1)
+        gb_margin_layout.addWidget(btn_align_left, 1, 0)
+        gb_margin_layout.addWidget(btn_align_right, 1, 1)
+        gb_margin_layout.addWidget(btn_align_top, 2, 0)
+        gb_margin_layout.addWidget(btn_align_bottom, 2, 1)
+        self.sb_id_margin_top = QDoubleSpinBox()
+        self.sb_id_margin_bottom = QDoubleSpinBox()
+        self.sb_id_margin_left = QDoubleSpinBox()
+        self.sb_id_margin_right = QDoubleSpinBox()
+        for sb in [self.sb_id_margin_top, self.sb_id_margin_bottom, self.sb_id_margin_left, self.sb_id_margin_right]:
+            sb.setRange(0, 500)
+            sb.setValue(10)
+            sb.valueChanged.connect(self.update_id_preview)
+        gb_margin_layout.addWidget(QLabel('គែមលើ (Top):'), 3, 0)
+        gb_margin_layout.addWidget(self.sb_id_margin_top, 3, 1)
+        gb_margin_layout.addWidget(QLabel('គែមក្រោម (Bottom):'), 4, 0)
+        gb_margin_layout.addWidget(self.sb_id_margin_bottom, 4, 1)
+        gb_margin_layout.addWidget(QLabel('គែមឆ្វេង (Left):'), 5, 0)
+        gb_margin_layout.addWidget(self.sb_id_margin_left, 5, 1)
+        gb_margin_layout.addWidget(QLabel('គែមស្តាំ (Right):'), 6, 0)
+        gb_margin_layout.addWidget(self.sb_id_margin_right, 6, 1)
+        gb_margin.setLayout(gb_margin_layout)
+        left_layout.addWidget(gb_margin)
+        layout.addWidget(left_panel)
+        self.id_preview = PreviewWidget()
+        self.id_preview.is_manual = True
+        self.id_preview.photo_positions = []
+        self.id_preview.itemDoubleClicked.connect(self.on_id_preview_double_clicked)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet('QScrollArea { background-color: #dbe2e9; border: none; }')
+        scroll_area.setWidget(self.id_preview)
+        layout.addWidget(scroll_area, 1)
+        right_panel = QWidget()
+        right_panel.setFixedWidth(200)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setAlignment(Qt.AlignTop)
+        btn_print_pdf = QPushButton('រក្សាទុកជា PDF')
+        btn_print_pdf.setStyleSheet('background-color: #2b52ff; color: white; padding: 12px; font-weight: bold; border-radius: 5px;')
+        btn_print_pdf.clicked.connect(self.save_id_pdf)
+        btn_print_foxit = QPushButton('បញ្ចូនទៅ Foxit PDF')
+        btn_print_foxit.setStyleSheet('background-color: #5850ec; color: white; padding: 12px; font-weight: bold; border-radius: 5px;')
+        btn_print_foxit.clicked.connect(self.print_id_foxit)
+        right_layout.addWidget(btn_print_pdf)
+        right_layout.addWidget(btn_print_foxit)
+        layout.addWidget(right_panel)
+        self.id_front_cv_img = None
+        self.id_back_cv_img = None
+        self.id_front_pixmap = None
+        self.id_back_pixmap = None
+        self.update_id_preview()
+
+    def id_center_h(self):
+        self.id_preview.center_horizontally()
+        self.sb_id_margin_left.blockSignals(True)
+        self.sb_id_margin_left.setValue(self.id_preview.margin_left)
+        self.sb_id_margin_left.blockSignals(False)
+        self.sb_id_margin_right.blockSignals(True)
+        self.sb_id_margin_right.setValue(self.id_preview.margin_right)
+        self.sb_id_margin_right.blockSignals(False)
+
+    def id_center_v(self):
+        self.id_preview.center_vertically()
+        self.sb_id_margin_top.blockSignals(True)
+        self.sb_id_margin_top.setValue(self.id_preview.margin_top)
+        self.sb_id_margin_top.blockSignals(False)
+        self.sb_id_margin_bottom.blockSignals(True)
+        self.sb_id_margin_bottom.setValue(self.id_preview.margin_bottom)
+        self.sb_id_margin_bottom.blockSignals(False)
+
+    def id_align_left(self):
+        self.id_preview.align_left()
+        self.sb_id_margin_left.blockSignals(True)
+        self.sb_id_margin_left.setValue(self.id_preview.margin_left)
+        self.sb_id_margin_left.blockSignals(False)
+
+    def id_align_right(self):
+        self.id_preview.align_right()
+        self.sb_id_margin_right.blockSignals(True)
+        self.sb_id_margin_right.setValue(self.id_preview.margin_right)
+        self.sb_id_margin_right.blockSignals(False)
+
+    def id_align_top(self):
+        self.id_preview.align_top()
+        self.sb_id_margin_top.blockSignals(True)
+        self.sb_id_margin_top.setValue(self.id_preview.margin_top)
+        self.sb_id_margin_top.blockSignals(False)
+
+    def id_align_bottom(self):
+        self.id_preview.align_bottom()
+        self.sb_id_margin_bottom.blockSignals(True)
+        self.sb_id_margin_bottom.setValue(self.id_preview.margin_bottom)
+        self.sb_id_margin_bottom.blockSignals(False)
+
+    def apply_id_filters(self, *args):
+        idx = self.cb_id_filter.currentIndex()
+        do_ai = self.chk_id_ai.isChecked()
+
+        def process_img(img):
+            if img is None:
+                return None
+            base_img = img.copy()
+            if do_ai:
+                from PyQt5.QtWidgets import QApplication
+                from PyQt5.QtCore import Qt
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    import os, urllib.request
+                    from cv2 import dnn_superres
+                    model_path = 'FSRCNN_x4.pb'
+                    if not os.path.exists(model_path):
+                        url = 'https://github.com/Saafke/FSRCNN_Tensorflow/raw/master/models/FSRCNN_x4.pb'
+                        urllib.request.urlretrieve(url, model_path)
+                    sr = dnn_superres.DnnSuperResImpl_create()
+                    sr.readModel(model_path)
+                    sr.setModel('fsrcnn', 4)
+                    base_img = sr.upsample(base_img)
+                    gaussian = cv2.GaussianBlur(base_img, (0, 0), 3.0)
+                    base_img = cv2.addWeighted(base_img, 1.8, gaussian, -0.8, 0)
+                except Exception as e:
+                    print('AI Super Resolution Error:', e)
+                finally:
+                    QApplication.restoreOverrideCursor()
+            if idx == 0:
+                res = base_img
+            elif idx == 1:
+                hsv = cv2.cvtColor(base_img, cv2.COLOR_RGB2HSV).astype(np.float32)
+                hsv[:, :, 1] *= 1.5
+                hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
+                hsv[:, :, 2] *= 1.2
+                hsv[:, :, 2] = np.clip(hsv[:, :, 2], 0, 255)
+                res = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
+            elif idx == 2:
+                gray = cv2.cvtColor(base_img, cv2.COLOR_RGB2GRAY)
+                gray = cv2.convertScaleAbs(gray, alpha=1.1, beta=5)
+                res = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+            elif idx == 3:
+                gray = cv2.cvtColor(base_img, cv2.COLOR_RGB2GRAY)
+                h_img, w_img = gray.shape
+                scale = 150.0 / w_img
+                if scale < 1.0:
+                    small_gray = cv2.resize(gray, (0, 0), fx=scale, fy=scale)
+                else:
+                    small_gray = gray.copy()
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+                bg_small = cv2.morphologyEx(small_gray, cv2.MORPH_CLOSE, kernel)
+                bg_small = cv2.GaussianBlur(bg_small, (11, 11), 0)
+                bg = cv2.resize(bg_small, (w_img, h_img))
+                gray_f = gray.astype(np.float32)
+                bg_f = bg.astype(np.float32) + 1
+                scan = cv2.divide(gray_f, bg_f, scale=255.0)
+                scan = np.clip(scan, 0, 255).astype(np.uint8)
+                gaussian = cv2.GaussianBlur(scan, (0, 0), 2.0)
+                scan = cv2.addWeighted(scan, 1.8, gaussian, -0.8, 0)
+                gamma = 0.65
+                invGamma = 1.0 / gamma
+                table = np.array([(i / 255.0) ** invGamma * 255 for i in np.arange(0, 256)]).astype('uint8')
+                scan = cv2.LUT(scan, table)
+                scan = cv2.convertScaleAbs(scan, alpha=1.2, beta=-10)
+                res = cv2.cvtColor(scan, cv2.COLOR_GRAY2RGB)
+            else:
+                res = base_img
+            h, w, ch = res.shape
+            from PyQt5.QtGui import QImage, QPixmap
+            qimg = QImage(res.data, w, h, ch * w, QImage.Format_RGB888)
+            return QPixmap.fromImage(qimg.copy())
+        self.id_front_pixmap = process_img(self.id_front_cv_img)
+        self.id_back_pixmap = process_img(self.id_back_cv_img)
+
+        def update_lbl(lbl, orig_img, final_pixmap):
+            if orig_img is not None and final_pixmap is not None:
+                orig_h, orig_w = orig_img.shape[:2]
+                fin_w, fin_h = (final_pixmap.width(), final_pixmap.height())
+                if orig_w == fin_w and orig_h == fin_h:
+                    lbl.setText(f'ទំហំដើម: {orig_w} x {orig_h} px')
+                else:
+                    lbl.setText(f'ទំហំដើម: {orig_w} x {orig_h} px | ដំឡើង: {fin_w} x {fin_h} px')
+            else:
+                lbl.setText('')
+        update_lbl(self.lbl_info_front, self.id_front_cv_img, self.id_front_pixmap)
+        update_lbl(self.lbl_info_back, self.id_back_cv_img, self.id_back_pixmap)
+        self.update_id_preview()
+
+    def load_id_front(self):
+        from PyQt5.QtWidgets import QDialog
+        from PyQt5.QtCore import QSettings
+        import os
+        settings = QSettings('PhotoPrintApp', 'Settings')
+        last_dir = settings.value('last_open_dir', '')
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getOpenFileName(self, 'ជ្រើសរើសរូបកាតមុខ ឬ PDF / Select Front ID or PDF', last_dir, 'Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)', options=options)
+        if file_name:
+            settings.setValue('last_open_dir', os.path.dirname(file_name))
+            if file_name.lower().endswith('.pdf'):
+                dialog = PdfImportDialog(file_name, self)
+                if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
+                    file_name = dialog.temp_image_path
+                else:
+                    return
+            self.id_front_file_name = file_name
+            self.id_front_points = None
+            dialog = PerspectiveCropDialog(file_name, self)
+            if dialog.exec_() == QDialog.Accepted and dialog.cropped_pixmap:
+                self.id_front_cv_img = dialog.cropped_cv_img
+                self.id_front_points = getattr(dialog, 'final_points', None)
+            else:
+                img = cv2.imdecode(np.fromfile(file_name, dtype=np.uint8), cv2.IMREAD_COLOR)
+                self.id_front_cv_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
+            self.apply_id_filters()
+
+    def load_id_back(self):
+        from PyQt5.QtWidgets import QDialog
+        from PyQt5.QtCore import QSettings
+        import os
+        settings = QSettings('PhotoPrintApp', 'Settings')
+        last_dir = settings.value('last_open_dir', '')
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getOpenFileName(self, 'ជ្រើសរើសរូបកាតក្រោយ ឬ PDF / Select Back ID or PDF', last_dir, 'Images and PDF (*.png *.jpg *.jpeg *.bmp *.pdf)', options=options)
+        if file_name:
+            settings.setValue('last_open_dir', os.path.dirname(file_name))
+            if file_name.lower().endswith('.pdf'):
+                dialog = PdfImportDialog(file_name, self)
+                if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
+                    file_name = dialog.temp_image_path
+                else:
+                    return
+            self.id_back_file_name = file_name
+            self.id_back_points = None
+            dialog = PerspectiveCropDialog(file_name, self)
+            if dialog.exec_() == QDialog.Accepted and dialog.cropped_pixmap:
+                self.id_back_cv_img = dialog.cropped_cv_img
+                self.id_back_points = getattr(dialog, 'final_points', None)
+            else:
+                img = cv2.imdecode(np.fromfile(file_name, dtype=np.uint8), cv2.IMREAD_COLOR)
+                self.id_back_cv_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
+            self.apply_id_filters()
+
+    def swap_id_cards(self):
+        self.id_front_cv_img, self.id_back_cv_img = (self.id_back_cv_img, self.id_front_cv_img)
+        f_name = getattr(self, 'id_front_file_name', None)
+        b_name = getattr(self, 'id_back_file_name', None)
+        self.id_front_file_name, self.id_back_file_name = (b_name, f_name)
+        f_pts = getattr(self, 'id_front_points', None)
+        b_pts = getattr(self, 'id_back_points', None)
+        self.id_front_points, self.id_back_points = (b_pts, f_pts)
+        self.apply_id_filters()
+
+    def clear_id_cards(self):
+        self.id_front_cv_img = None
+        self.id_back_cv_img = None
+        self.id_front_pixmap = None
+        self.id_back_pixmap = None
+        self.id_front_file_name = None
+        self.id_back_file_name = None
+        self.id_front_points = None
+        self.id_back_points = None
+        self.update_id_preview()
+
+    def on_id_preview_double_clicked(self, pos):
+        label = pos.get('label', '')
+        from PyQt5.QtWidgets import QDialog
+        if label == 'Front' and hasattr(self, 'id_front_file_name') and self.id_front_file_name:
+            dialog = PerspectiveCropDialog(self.id_front_file_name, self, initial_points=getattr(self, 'id_front_points', None))
+            if dialog.exec_() == QDialog.Accepted and dialog.cropped_pixmap:
+                self.id_front_cv_img = dialog.cropped_cv_img
+                self.id_front_points = getattr(dialog, 'final_points', None)
+                self.apply_id_filters()
+        elif label == 'Back' and hasattr(self, 'id_back_file_name') and self.id_back_file_name:
+            dialog = PerspectiveCropDialog(self.id_back_file_name, self, initial_points=getattr(self, 'id_back_points', None))
+            if dialog.exec_() == QDialog.Accepted and dialog.cropped_pixmap:
+                self.id_back_cv_img = dialog.cropped_cv_img
+                self.id_back_points = getattr(dialog, 'final_points', None)
+                self.apply_id_filters()
+
+    def update_id_preview(self):
+        paper_sizes = {0: (210.0, 297.0), 1: (148.0, 210.0), 2: (100.0, 150.0)}
+        idx = self.cb_id_paper.currentIndex()
+        pw, ph = paper_sizes.get(idx, (210.0, 297.0))
+        self.id_preview.paper_w = pw
+        self.id_preview.paper_h = ph
+        self.id_preview.margin_left = self.sb_id_margin_left.value()
+        self.id_preview.margin_right = self.sb_id_margin_right.value()
+        self.id_preview.margin_top = self.sb_id_margin_top.value()
+        self.id_preview.margin_bottom = self.sb_id_margin_bottom.value()
+        self.id_preview.apply_rounded_corners = self.chk_id_rounded.isChecked()
+        self.id_preview.photo_positions.clear()
+        id_w = self.sb_id_w.value()
+        id_h = self.sb_id_h.value()
+        gap = 5.0
+        cards_in_row = 0
+        if self.id_front_pixmap:
+            cards_in_row += 1
+        if self.id_back_pixmap:
+            cards_in_row += 1
+        if cards_in_row > 0:
+            total_w = cards_in_row * id_w + (cards_in_row - 1) * gap
+            avail_w = pw - self.id_preview.margin_left - self.id_preview.margin_right
+            start_x = self.id_preview.margin_left + (avail_w - total_w) / 2.0
+        else:
+            start_x = self.id_preview.margin_left
+        start_y = self.id_preview.margin_top
+        qty = self.sb_id_qty.value()
+        curr_y = start_y
+        for i in range(qty):
+            if curr_y + id_h > self.id_preview.paper_h - self.id_preview.margin_bottom:
+                break
+            if self.id_front_pixmap:
+                self.id_preview.photo_positions.append({'x': start_x, 'y': curr_y, 'w': id_w, 'h': id_h, 'label': 'Front', 'image_pixmap': self.id_front_pixmap, 'scale': 1.0, 'pan_x': 0.0, 'pan_y': 0.0, 'rotation_angle': 0, 'selected': False})
+            if self.id_back_pixmap:
+                self.id_preview.photo_positions.append({'x': start_x + id_w + gap, 'y': curr_y, 'w': id_w, 'h': id_h, 'label': 'Back', 'image_pixmap': self.id_back_pixmap, 'scale': 1.0, 'pan_x': 0.0, 'pan_y': 0.0, 'rotation_angle': 0, 'selected': False})
+            curr_y += id_h + gap
+        self.id_preview.update()
+
+    def save_id_pdf(self, show_msg=True):
+        from PyQt5.QtWidgets import QMessageBox
+        import os
+        from datetime import datetime
+        from PyQt5.QtGui import QPdfWriter, QPageSize, QPageLayout, QPainter, QTransform
+        from PyQt5.QtCore import QSizeF, QMarginsF, Qt, QRectF
+        file_name = ''
+        if hasattr(self, 'default_pdf_folder') and self.default_pdf_folder and os.path.isdir(self.default_pdf_folder):
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            file_name = os.path.join(self.default_pdf_folder, f'IDCard_{timestamp}.pdf')
+        else:
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(self, 'រក្សាទុកជា PDF / Save as PDF', '', 'PDF Files (*.pdf)', options=options)
+        if not file_name:
+            return None
+        pdf_writer = QPdfWriter(file_name)
+        pdf_writer.setPageSize(QPageSize(QSizeF(self.id_preview.paper_w, self.id_preview.paper_h), QPageSize.Millimeter))
+        pdf_writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+        pdf_writer.setResolution(300)
+        painter = QPainter(pdf_writer)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        scale = 300 / 25.4
+        painter.fillRect(0, 0, int(self.id_preview.paper_w * scale), int(self.id_preview.paper_h * scale), Qt.white)
+        for pos in self.id_preview.photo_positions:
+            x, y = (pos['x'] * scale, pos['y'] * scale)
+            w, h = (pos['w'] * scale, pos['h'] * scale)
+            rect = QRectF(x, y, w, h)
+            painter.save()
+            if getattr(self.id_preview, 'apply_rounded_corners', False):
+                from PyQt5.QtGui import QPainterPath
+                path = QPainterPath()
+                radius_px = 3.18 * scale
+                path.addRoundedRect(rect, radius_px, radius_px)
+                painter.setClipPath(path)
+            img = pos.get('image_pixmap')
+            if img and (not img.isNull()):
+                painter.drawPixmap(rect.toRect(), img)
+            else:
+                painter.setPen(QPen(Qt.black, 1))
+                painter.drawRect(rect.toRect())
+            painter.restore()
+        painter.end()
+        if show_msg:
+            QMessageBox.information(self, 'ជោគជ័យ / Success', 'ឯកសារ PDF ត្រូវបានរក្សាទុកដោយជោគជ័យ! / PDF saved successfully!')
+        return file_name
+
+    def print_id_foxit(self):
+        import subprocess
+        from PyQt5.QtWidgets import QMessageBox
+        import os
+        if not hasattr(self, 'foxit_path') or not self.foxit_path or (not os.path.exists(self.foxit_path)):
+            QMessageBox.warning(self, 'មិនទាន់កំណត់កម្មវិធី / Not Configured', 'សូមចូលទៅកាន់ Settings (⚙) ដើម្បីកំណត់ទីតាំងកម្មវិធី Foxit PDF ជាមុនសិន។')
+            return
+        file_name = self.save_id_pdf(show_msg=False)
+        if file_name:
+            try:
+                subprocess.Popen([self.foxit_path, file_name])
+            except Exception as e:
+                QMessageBox.critical(self, 'កំហុស / Error', f'មិនអាចបើកកម្មវិធី Foxit PDF បានទេ:\n{str(e)}')
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+        file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
+        valid_files = []
+        from PyQt5.QtWidgets import QDialog
+        for f in file_names:
+            if f.lower().endswith('.pdf'):
+                dialog = PdfImportDialog(f, self)
+                if dialog.exec_() == QDialog.Accepted and dialog.temp_image_path:
+                    valid_files.append(dialog.temp_image_path)
+            elif any((f.lower().endswith(e) for e in ['.png', '.jpg', '.jpeg', '.bmp'])):
+                valid_files.append(f)
+        if not valid_files:
+            return
+        current_tab = self.tabs.currentIndex()
+        if current_tab == 0:
+            self.loaded_images = valid_files
+            self.btn_clear.setVisible(True)
+            if len(valid_files) == 1:
+                self.default_image_pixmap = QPixmap(valid_files[0])
+                self.lbl_image_status.setText(f"<i>បានជ្រើសរើស: {valid_files[0].split('/')[-1]}</i>")
+            else:
+                self.default_image_pixmap = None
+                self.lbl_image_status.setText(f'<i>បានជ្រើសរើសរូបភាពចំនួន {len(valid_files)} ឯកសារ</i>')
+            self.calculate_layout()
+        elif current_tab == 1:
+            if len(valid_files) >= 1:
+                self.process_ocr_from_file(valid_files[0])
+        elif current_tab == 2:
+            from PyQt5.QtWidgets import QDialog
+            for i, fpath in enumerate(valid_files):
+                if len(valid_files) >= 2:
+                    target = 'front' if i == 0 else 'back'
+                elif self.id_front_cv_img is None:
+                    target = 'front'
+                elif self.id_back_cv_img is None:
+                    target = 'back'
+                else:
+                    target = 'front'
+                if i > 1:
+                    break
+                dialog = PerspectiveCropDialog(fpath, self)
+                is_accepted = dialog.exec_() == QDialog.Accepted
+                if target == 'front':
+                    self.id_front_file_name = fpath
+                    self.id_front_points = None
+                    if is_accepted and dialog.cropped_pixmap:
+                        self.id_front_cv_img = dialog.cropped_cv_img
+                        self.id_front_points = getattr(dialog, 'final_points', None)
+                    else:
+                        img = cv2.imdecode(np.fromfile(fpath, dtype=np.uint8), cv2.IMREAD_COLOR)
+                        self.id_front_cv_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
+                else:
+                    self.id_back_file_name = fpath
+                    self.id_back_points = None
+                    if is_accepted and dialog.cropped_pixmap:
+                        self.id_back_cv_img = dialog.cropped_cv_img
+                        self.id_back_points = getattr(dialog, 'final_points', None)
+                    else:
+                        img = cv2.imdecode(np.fromfile(fpath, dtype=np.uint8), cv2.IMREAD_COLOR)
+                        self.id_back_cv_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
+            self.apply_id_filters()

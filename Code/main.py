@@ -411,6 +411,7 @@ class PreviewWidget(QWidget):
     """ Custom Widget សម្រាប់គូរទិដ្ឋភាពក្រដាស និងក្រឡារូបថត (Live Print Preview) """
     selectionChanged = pyqtSignal()
     itemDoubleClicked = pyqtSignal(dict)
+    stateChanged = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -639,6 +640,7 @@ class PreviewWidget(QWidget):
         min_x = min(p['x'] for p in selected)
         for p in selected: p['x'] = min_x
         self.update()
+        self.stateChanged.emit()
 
     def align_selected_top(self):
         """ តម្រឹមរូបភាពដែលបានជ្រើសរើសទៅខាងលើបំផុតនៃក្រុម """
@@ -647,6 +649,7 @@ class PreviewWidget(QWidget):
         min_y = min(p['y'] for p in selected)
         for p in selected: p['y'] = min_y
         self.update()
+        self.stateChanged.emit()
 
     def align_selected_right(self):
         """ តម្រឹមរូបភាពដែលបានជ្រើសរើសទៅខាងស្តាំបំផុតនៃក្រុម """
@@ -655,6 +658,7 @@ class PreviewWidget(QWidget):
         max_right = max(p['x'] + p['w'] for p in selected)
         for p in selected: p['x'] = max_right - p['w']
         self.update()
+        self.stateChanged.emit()
 
     def align_selected_bottom(self):
         """ តម្រឹមរូបភាពដែលបានជ្រើសរើសទៅខាងក្រោមបំផុតនៃក្រុម """
@@ -663,6 +667,7 @@ class PreviewWidget(QWidget):
         max_bottom = max(p['y'] + p['h'] for p in selected)
         for p in selected: p['y'] = max_bottom - p['h']
         self.update()
+        self.stateChanged.emit()
 
     def distribute_horizontally(self):
         """ រៀបចំគម្លាតរូបភាពឱ្យស្មើគ្នាផ្ដេក (Distribute Horizontally) """
@@ -677,6 +682,7 @@ class PreviewWidget(QWidget):
             p['x'] = curr_x
             curr_x += p['w'] + gap
         self.update()
+        self.stateChanged.emit()
 
     def distribute_vertically(self):
         """ រៀបចំគម្លាតរូបភាពឱ្យស្មើគ្នាបញ្ឈរ (Distribute Vertically) """
@@ -691,6 +697,7 @@ class PreviewWidget(QWidget):
             p['y'] = curr_y
             curr_y += p['h'] + gap
         self.update()
+        self.stateChanged.emit()
 
     def center_horizontally(self):
         """ តម្រឹមរូបភាពកណ្តាលតាមផ្ដេក (Center Horizontally) ធៀបនឹងក្រដាស និង Margin """
@@ -714,6 +721,7 @@ class PreviewWidget(QWidget):
             shift_x = paper_center_x - group_center_x
             for p in target_group: p['x'] += shift_x
         self.update()
+        self.stateChanged.emit()
 
     def center_vertically(self):
         """ តម្រឹមរូបភាពកណ្តាលតាមបញ្ឈរ (Center Vertically) ធៀបនឹងក្រដាស និង Margin """
@@ -737,6 +745,7 @@ class PreviewWidget(QWidget):
             shift_y = paper_center_y - group_center_y
             for p in target_group: p['y'] += shift_y
         self.update()
+        self.stateChanged.emit()
 
     def align_top(self):
         selected = [p for p in self.photo_positions if p.get('selected')]
@@ -750,6 +759,7 @@ class PreviewWidget(QWidget):
             shift_y = self.margin_top - min_y
             for p in target_group: p['y'] += shift_y
         self.update()
+        self.stateChanged.emit()
 
     def align_bottom(self):
         selected = [p for p in self.photo_positions if p.get('selected')]
@@ -763,6 +773,7 @@ class PreviewWidget(QWidget):
             shift_y = (self.paper_h - self.margin_bottom) - max_bottom
             for p in target_group: p['y'] += shift_y
         self.update()
+        self.stateChanged.emit()
 
     def align_left(self):
         selected = [p for p in self.photo_positions if p.get('selected')]
@@ -776,6 +787,7 @@ class PreviewWidget(QWidget):
             shift_x = self.margin_left - min_x
             for p in target_group: p['x'] += shift_x
         self.update()
+        self.stateChanged.emit()
 
     def align_right(self):
         selected = [p for p in self.photo_positions if p.get('selected')]
@@ -789,6 +801,7 @@ class PreviewWidget(QWidget):
             shift_x = (self.paper_w - self.margin_right) - max_right
             for p in target_group: p['x'] += shift_x
         self.update()
+        self.stateChanged.emit()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1088,6 +1101,12 @@ class PreviewWidget(QWidget):
                 self.selection_rect = None # លុបចតុកោណកែងដែលបានគូរ
                 self.selectionChanged.emit()
                 self.update()
+        
+        # Emitting state change for any modifications during mouse interaction
+        if getattr(self, 'was_modified_during_mouse', False) or getattr(self, 'is_panning', False) or getattr(self, 'drag_start_pos', False):
+            self.stateChanged.emit()
+        # Just emit it to be safe for any dragging
+        self.stateChanged.emit()
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1207,7 +1226,7 @@ def build_mixed_html(text, font_kh, font_en, color, bg_color, is_bold, is_italic
 class TextPreviewWidget(QWidget):
     """ Custom Widget សម្រាប់គូរទិដ្ឋភាពអក្សរធំ (Live Text Preview) """
     selectionChanged = pyqtSignal(int)
-    
+    stateChanged = pyqtSignal()
     def __init__(self):
         super().__init__()
         self.setMinimumSize(400, 500)
@@ -1375,6 +1394,8 @@ class TextPreviewWidget(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if self.drag_mode is not None:
+                self.stateChanged.emit()
             self.drag_mode = None
             self.update()
 
@@ -1700,12 +1721,53 @@ class OCRWorker(QThread):
             else:
                 self.error_signal.emit(err_str)
 
+class HistoryManager:
+    def __init__(self, limit=50):
+        self.undo_stack = []
+        self.redo_stack = []
+        self.limit = limit
+        self.is_undoing_redoing = False
+
+    def push(self, state):
+        if self.is_undoing_redoing:
+            return
+        if self.undo_stack and self.undo_stack[-1] == state:
+            return
+        self.undo_stack.append(state)
+        if len(self.undo_stack) > self.limit:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+
+    def can_undo(self):
+        return len(self.undo_stack) > 1
+
+    def can_redo(self):
+        return len(self.redo_stack) > 0
+
+    def undo(self):
+        if self.can_undo():
+            self.redo_stack.append(self.undo_stack.pop())
+            return self.undo_stack[-1]
+        return None
+
+    def redo(self):
+        if self.can_redo():
+            state = self.redo_stack.pop()
+            self.undo_stack.append(state)
+            return state
+        return None
+
 class PhotoPrintApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setAcceptDrops(True)
         self.setWindowTitle("Fast Print Text Photo")
         self.default_image_pixmap = None # Added default image pixmap
+        
+        self.history_tab1 = HistoryManager()
+        self.history_tab2 = HistoryManager()
+        self.history_tab3 = HistoryManager()
+        
         from PyQt5.QtCore import QSettings
         self.settings = QSettings("PhotoPrintApp", "Settings")
         self.default_pdf_folder = self.settings.value("default_pdf_folder", "")
@@ -1716,6 +1778,147 @@ class PhotoPrintApp(QMainWindow):
         
         # Check for updates automatically in the background
         updater.check_for_updates(self)
+
+        # Undo/Redo Shortcuts
+        from PyQt5.QtWidgets import QShortcut
+        from PyQt5.QtGui import QKeySequence
+        self.shortcut_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
+        self.shortcut_undo.activated.connect(self.undo_action)
+        self.shortcut_redo = QShortcut(QKeySequence("Ctrl+Y"), self)
+        self.shortcut_redo.activated.connect(self.redo_action)
+        self.tabs.currentChanged.connect(self.update_undo_redo_ui)
+
+    def save_state_tab1(self):
+        state = [[p.copy() for p in c.photo_positions] for c in self.preview_canvases]
+        self.history_tab1.push(state)
+        self.update_undo_redo_ui()
+
+    def save_state_tab2(self):
+        if not hasattr(self, 'text_preview'): return
+        copied_lines = []
+        for l in getattr(self.text_preview, 'lines_data', []):
+            c_l = dict(l)
+            if 'rect' in c_l:
+                from PyQt5.QtCore import QRectF
+                c_l['rect'] = QRectF(c_l['rect'])
+            if 'color' in c_l:
+                from PyQt5.QtGui import QColor
+                c_l['color'] = QColor(c_l['color'])
+            if 'bg_color' in c_l:
+                from PyQt5.QtGui import QColor
+                c_l['bg_color'] = QColor(c_l['bg_color'])
+            copied_lines.append(c_l)
+        state = {
+            'text': self.text_preview.text,
+            'lines_data': copied_lines
+        }
+        self.history_tab2.push(state)
+        self.update_undo_redo_ui()
+
+    def save_state_tab3(self):
+        if not hasattr(self, 'id_preview'): return
+        state = [p.copy() for p in self.id_preview.photo_positions]
+        self.history_tab3.push(state)
+        self.update_undo_redo_ui()
+
+    def update_undo_redo_ui(self, index=None):
+        if hasattr(self, 'btn_undo1'):
+            self.btn_undo1.setEnabled(self.history_tab1.can_undo())
+            self.btn_redo1.setEnabled(self.history_tab1.can_redo())
+        if hasattr(self, 'btn_undo2'):
+            self.btn_undo2.setEnabled(self.history_tab2.can_undo())
+            self.btn_redo2.setEnabled(self.history_tab2.can_redo())
+        if hasattr(self, 'btn_undo3'):
+            self.btn_undo3.setEnabled(self.history_tab3.can_undo())
+            self.btn_redo3.setEnabled(self.history_tab3.can_redo())
+
+    def undo_action(self):
+        idx = self.tabs.currentIndex()
+        if idx == 0 and self.history_tab1.can_undo():
+            self.history_tab1.is_undoing_redoing = True
+            state = self.history_tab1.undo()
+            if state is not None:
+                for c, s in zip(self.preview_canvases, state):
+                    c.photo_positions = [p.copy() for p in s]
+                    c.update()
+            self.history_tab1.is_undoing_redoing = False
+        elif idx == 1 and self.history_tab2.can_undo():
+            self.history_tab2.is_undoing_redoing = True
+            state = self.history_tab2.undo()
+            if state is not None:
+                self.text_preview.text = state['text']
+                if hasattr(self, 'txt_banner'):
+                    self.txt_banner.blockSignals(True)
+                    self.txt_banner.setText(state['text'])
+                    self.txt_banner.blockSignals(False)
+                copied_lines = []
+                for l in state['lines_data']:
+                    c_l = dict(l)
+                    if 'rect' in c_l:
+                        from PyQt5.QtCore import QRectF
+                        c_l['rect'] = QRectF(c_l['rect'])
+                    if 'color' in c_l:
+                        from PyQt5.QtGui import QColor
+                        c_l['color'] = QColor(c_l['color'])
+                    if 'bg_color' in c_l:
+                        from PyQt5.QtGui import QColor
+                        c_l['bg_color'] = QColor(c_l['bg_color'])
+                    copied_lines.append(c_l)
+                self.text_preview.lines_data = copied_lines
+                self.text_preview.update()
+            self.history_tab2.is_undoing_redoing = False
+        elif idx == 2 and self.history_tab3.can_undo():
+            self.history_tab3.is_undoing_redoing = True
+            state = self.history_tab3.undo()
+            if state is not None:
+                self.id_preview.photo_positions = [p.copy() for p in state]
+                self.id_preview.update()
+            self.history_tab3.is_undoing_redoing = False
+        self.update_undo_redo_ui()
+
+    def redo_action(self):
+        idx = self.tabs.currentIndex()
+        if idx == 0 and self.history_tab1.can_redo():
+            self.history_tab1.is_undoing_redoing = True
+            state = self.history_tab1.redo()
+            if state is not None:
+                for c, s in zip(self.preview_canvases, state):
+                    c.photo_positions = [p.copy() for p in s]
+                    c.update()
+            self.history_tab1.is_undoing_redoing = False
+        elif idx == 1 and self.history_tab2.can_redo():
+            self.history_tab2.is_undoing_redoing = True
+            state = self.history_tab2.redo()
+            if state is not None:
+                self.text_preview.text = state['text']
+                if hasattr(self, 'txt_banner'):
+                    self.txt_banner.blockSignals(True)
+                    self.txt_banner.setText(state['text'])
+                    self.txt_banner.blockSignals(False)
+                copied_lines = []
+                for l in state['lines_data']:
+                    c_l = dict(l)
+                    if 'rect' in c_l:
+                        from PyQt5.QtCore import QRectF
+                        c_l['rect'] = QRectF(c_l['rect'])
+                    if 'color' in c_l:
+                        from PyQt5.QtGui import QColor
+                        c_l['color'] = QColor(c_l['color'])
+                    if 'bg_color' in c_l:
+                        from PyQt5.QtGui import QColor
+                        c_l['bg_color'] = QColor(c_l['bg_color'])
+                    copied_lines.append(c_l)
+                self.text_preview.lines_data = copied_lines
+                self.text_preview.update()
+            self.history_tab2.is_undoing_redoing = False
+        elif idx == 2 and self.history_tab3.can_redo():
+            self.history_tab3.is_undoing_redoing = True
+            state = self.history_tab3.redo()
+            if state is not None:
+                self.id_preview.photo_positions = [p.copy() for p in state]
+                self.id_preview.update()
+            self.history_tab3.is_undoing_redoing = False
+        self.update_undo_redo_ui()
 
     def initUI(self):
         # Main Widget and Layout
@@ -1952,7 +2155,17 @@ class PhotoPrintApp(QMainWindow):
         mid_title = QLabel("<b>ទិដ្ឋភាពបង្ហាញជាក់ស្តែង / LIVE PRINT PREVIEW</b>")
         mid_title.setAlignment(Qt.AlignCenter)
         mid_title.setFont(QFont("Khmer OS Battambang", 11))
-        mid_layout.addWidget(mid_title)
+        h_mid_top = QHBoxLayout()
+        h_mid_top.addWidget(mid_title)
+        self.btn_undo1 = QPushButton("↶ Undo (Ctrl+Z)")
+        self.btn_redo1 = QPushButton("↷ Redo (Ctrl+Y)")
+        self.btn_undo1.clicked.connect(self.undo_action)
+        self.btn_redo1.clicked.connect(self.redo_action)
+        self.btn_undo1.setEnabled(False)
+        self.btn_redo1.setEnabled(False)
+        h_mid_top.addWidget(self.btn_undo1)
+        h_mid_top.addWidget(self.btn_redo1)
+        mid_layout.addLayout(h_mid_top)
         
         mid_layout.addWidget(self.scroll_area)
 
@@ -2179,7 +2392,7 @@ class PhotoPrintApp(QMainWindow):
         btn_print.setStyleSheet("background-color: #5850ec; color: white; padding: 12px; font-weight: bold; border-radius: 5px;")
         btn_print.clicked.connect(self.import_to_foxit)
         
-        btn_support = QLabel("សរសេរដោយ៖ ដែកូដថ្មី Ver.1.0.5")
+        btn_support = QLabel("សរសេរដោយ៖ ដែកូដថ្មី Ver.1.0.2")
         btn_support.setStyleSheet(" color: green ; padding: 12px; font-weight: bold; border-radius: 5px;")
 
         right_layout.addLayout(h_save_layout)
@@ -2203,12 +2416,72 @@ class PhotoPrintApp(QMainWindow):
         self.tabs.addTab(self.tab2, "២. សរសេរអក្សរធំ / Large Text Banner")
         self.tabs.addTab(self.tab3, "៣. បោះពុម្ពកាតសម្គាល់ខ្លួន / ID Card Print")
         
+        self.dark_mode_cb = QCheckBox("ងងឹត / Dark Mode")
+        self.dark_mode_cb.setStyleSheet("padding: 5px; font-weight: bold; background: transparent; color: inherit;")
+        self.dark_mode_cb.stateChanged.connect(self.toggle_dark_mode)
+        self.tabs.setCornerWidget(self.dark_mode_cb, Qt.TopRightCorner)
+        
         layout = QVBoxLayout(main_widget)
         layout.addWidget(self.tabs)
         layout.setContentsMargins(0,0,0,0)
         
         # ធ្វើការគណនាបឋមនៅពេលចាប់ផ្តើមកម្មវិធី
         self.calculate_layout()
+        
+        # Load theme setting
+        saved_theme = self.settings.value("theme", "light")
+        if saved_theme == "dark":
+            self.dark_mode_cb.setChecked(True)
+            self.toggle_dark_mode(Qt.Checked)
+
+    def toggle_dark_mode(self, state):
+        app = QApplication.instance()
+        if state == Qt.Checked:
+            self.settings.setValue("theme", "dark")
+            app.setStyleSheet("""
+                QWidget { background-color: #2b2b2b; color: #ffffff; }
+                QGroupBox { border: 1px solid #555555; margin-top: 15px; color: #ffffff; border-radius: 5px; }
+                QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; }
+                QComboBox, QSpinBox, QDoubleSpinBox { background-color: #3b3b3b; color: #ffffff; border: 1px solid #555555; padding: 2px; }
+                QPushButton { background-color: #3b3b3b; color: #ffffff; border: 1px solid #555555; padding: 5px; border-radius: 4px; }
+                QPushButton:hover { background-color: #4b4b4b; }
+                QTabWidget::pane { border: 1px solid #555555; background: #2b2b2b; }
+                QTabBar::tab { padding: 10px 20px; font-weight: normal; font-size: 12px; font-family: 'Khmer OS Battambang', Arial; background-color: #3b3b3b; color: #ffffff; border: 1px solid #555555; }
+                QTabBar::tab:selected { background-color: #0084c7; color: white; }
+                QTextEdit { background-color: #3b3b3b; color: #ffffff; border: 1px solid #555555; }
+                QLabel { color: #ffffff; background: transparent; }
+                QScrollArea { background-color: #2b2b2b; border: none; }
+                QScrollBar:vertical { background: #2b2b2b; width: 15px; margin: 0px 0px 0px 0px; }
+                QScrollBar::handle:vertical { background: #555555; min-height: 20px; border-radius: 7px; }
+                QScrollBar::add-line:vertical { height: 0px; }
+                QScrollBar::sub-line:vertical { height: 0px; }
+                QScrollBar:horizontal { background: #2b2b2b; height: 15px; margin: 0px 0px 0px 0px; }
+                QScrollBar::handle:horizontal { background: #555555; min-width: 20px; border-radius: 7px; }
+                QScrollBar::add-line:horizontal { width: 0px; }
+                QScrollBar::sub-line:horizontal { width: 0px; }
+                QMenu { background-color: #2b2b2b; color: #ffffff; border: 1px solid #555555; }
+                QMenu::item:selected { background-color: #0084c7; color: #ffffff; }
+            """)
+        else:
+            self.settings.setValue("theme", "light")
+            app.setStyleSheet("")
+            # Restore specific styles
+            self.tabs.setStyleSheet("""
+                QTabBar::tab {
+                    padding: 10px 20px;
+                    font-weight: normal;
+                    font-size: 12px;
+                    font-family: 'Khmer OS Battambang', Arial;
+                }
+                QTabBar::tab:selected {
+                    background-color: #0084c7;
+                    color: white;
+                }
+                QTabBar::tab:!selected {
+                    background-color: #e0e0e0;
+                    color: black;
+                }
+            """)
 
     def initTextUI(self, parent_widget):
         from PyQt5.QtWidgets import QTextEdit, QFontComboBox, QColorDialog
@@ -2255,6 +2528,7 @@ class PhotoPrintApp(QMainWindow):
         font_battambang = QFont("Khmer OS Battambang", 12)
         self.txt_banner.setFont(font_battambang)
         self.txt_banner.textChanged.connect(self.update_text_preview)
+        # We will save state inside update_text_preview to capture both typing and font changes
         gb_text_layout.addWidget(self.txt_banner)
         
         self.btn_clear_text = QPushButton("លុបអត្ថបទ / Clear Text")
@@ -2481,10 +2755,21 @@ class PhotoPrintApp(QMainWindow):
         mid_title = QLabel("<b>ទិដ្ឋភាពបង្ហាញជាក់ស្តែង / LIVE TEXT PREVIEW</b>")
         mid_title.setAlignment(Qt.AlignCenter)
         mid_title.setFont(QFont("Khmer OS Battambang", 11))
-        mid_layout.addWidget(mid_title)
+        h_mid_top = QHBoxLayout()
+        h_mid_top.addWidget(mid_title)
+        self.btn_undo2 = QPushButton("↶ Undo (Ctrl+Z)")
+        self.btn_redo2 = QPushButton("↷ Redo (Ctrl+Y)")
+        self.btn_undo2.clicked.connect(self.undo_action)
+        self.btn_redo2.clicked.connect(self.redo_action)
+        self.btn_undo2.setEnabled(False)
+        self.btn_redo2.setEnabled(False)
+        h_mid_top.addWidget(self.btn_undo2)
+        h_mid_top.addWidget(self.btn_redo2)
+        mid_layout.addLayout(h_mid_top)
         
         self.text_preview = TextPreviewWidget()
         self.text_preview.selectionChanged.connect(self.on_text_selection_changed)
+        self.text_preview.stateChanged.connect(self.save_state_tab2)
         mid_layout.addWidget(self.text_preview)
         
         layout.addWidget(left_panel)
@@ -2590,6 +2875,8 @@ class PhotoPrintApp(QMainWindow):
         self.text_preview.margin_left = m
         self.text_preview.margin_right = m
         self.text_preview.update()
+        if not getattr(self.history_tab2, 'is_undoing_redoing', False):
+            self.save_state_tab2()
         
     def on_text_selection_changed(self, idx):
         if 0 <= idx < len(self.text_preview.lines_data):
@@ -2971,35 +3258,78 @@ class PhotoPrintApp(QMainWindow):
         for c in self.preview_canvases: c.distribute_vertically()
 
     def keyPressEvent(self, event):
+        idx = self.tabs.currentIndex()
         if event.key() == Qt.Key_Delete:
-            self.clear_selected_image()
+            if idx == 0:
+                self.clear_selected_image()
+            elif idx == 2 and hasattr(self, 'id_preview'):
+                for p in self.id_preview.photo_positions:
+                    if p.get('selected', False):
+                        p['image_pixmap'] = None
+                        p['scale'] = 1.0
+                        p['pan_x'] = 0.0
+                        p['pan_y'] = 0.0
+                self.id_preview.update()
         elif event.key() == Qt.Key_R:
-            for c in self.preview_canvases: c.rotate_selected_photos()
+            if idx == 0:
+                for c in self.preview_canvases: c.rotate_selected_photos()
+            elif idx == 2 and hasattr(self, 'id_preview'):
+                self.id_preview.rotate_selected_photos()
         elif event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
             if event.modifiers() & Qt.ControlModifier:
                 # ប្រើ Ctrl + Arrow សម្រាប់រំកិលសាច់រូបភាព (Pan inside Cover mode)
                 step = 20 if (event.modifiers() & Qt.ShiftModifier) else 5
                 if event.key() == Qt.Key_Up:
-                    for c in self.preview_canvases: c.pan_selected_photos(0, -step)
+                    if idx == 0:
+                        for c in self.preview_canvases: c.pan_selected_photos(0, -step)
+                    elif idx == 2 and hasattr(self, 'id_preview'):
+                        self.id_preview.pan_selected_photos(0, -step)
                 elif event.key() == Qt.Key_Down:
-                    for c in self.preview_canvases: c.pan_selected_photos(0, step)
+                    if idx == 0:
+                        for c in self.preview_canvases: c.pan_selected_photos(0, step)
+                    elif idx == 2 and hasattr(self, 'id_preview'):
+                        self.id_preview.pan_selected_photos(0, step)
                 elif event.key() == Qt.Key_Left:
-                    for c in self.preview_canvases: c.pan_selected_photos(-step, 0)
+                    if idx == 0:
+                        for c in self.preview_canvases: c.pan_selected_photos(-step, 0)
+                    elif idx == 2 and hasattr(self, 'id_preview'):
+                        self.id_preview.pan_selected_photos(-step, 0)
                 elif event.key() == Qt.Key_Right:
-                    for c in self.preview_canvases: c.pan_selected_photos(step, 0)
+                    if idx == 0:
+                        for c in self.preview_canvases: c.pan_selected_photos(step, 0)
+                    elif idx == 2 and hasattr(self, 'id_preview'):
+                        self.id_preview.pan_selected_photos(step, 0)
             else:
                 # ប្រើ Arrow ធម្មតា សម្រាប់រំកិលប្រអប់រូបភាពនៅលើក្រដាស
                 step = 5.0 if (event.modifiers() & Qt.ShiftModifier) else 0.5
                 if event.key() == Qt.Key_Up:
-                    for c in self.preview_canvases: c.nudge_selected_photos(0, -step)
+                    if idx == 0:
+                        for c in self.preview_canvases: c.nudge_selected_photos(0, -step)
+                    elif idx == 2 and hasattr(self, 'id_preview'):
+                        self.id_preview.nudge_selected_photos(0, -step)
                 elif event.key() == Qt.Key_Down:
-                    for c in self.preview_canvases: c.nudge_selected_photos(0, step)
+                    if idx == 0:
+                        for c in self.preview_canvases: c.nudge_selected_photos(0, step)
+                    elif idx == 2 and hasattr(self, 'id_preview'):
+                        self.id_preview.nudge_selected_photos(0, step)
                 elif event.key() == Qt.Key_Left:
-                    for c in self.preview_canvases: c.nudge_selected_photos(-step, 0)
+                    if idx == 0:
+                        for c in self.preview_canvases: c.nudge_selected_photos(-step, 0)
+                    elif idx == 2 and hasattr(self, 'id_preview'):
+                        self.id_preview.nudge_selected_photos(-step, 0)
                 elif event.key() == Qt.Key_Right:
-                    for c in self.preview_canvases: c.nudge_selected_photos(step, 0)
+                    if idx == 0:
+                        for c in self.preview_canvases: c.nudge_selected_photos(step, 0)
+                    elif idx == 2 and hasattr(self, 'id_preview'):
+                        self.id_preview.nudge_selected_photos(step, 0)
         else:
             super().keyPressEvent(event)
+        
+        if event.key() in (Qt.Key_Delete, Qt.Key_R, Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
+            if idx == 0 and not getattr(self.history_tab1, 'is_undoing_redoing', False):
+                self.save_state_tab1()
+            elif idx == 2 and not getattr(self.history_tab3, 'is_undoing_redoing', False):
+                self.save_state_tab3()
 
     def change_paper_size(self):
         size_text = self.cb_paper_size.currentText()
@@ -3355,6 +3685,7 @@ class PhotoPrintApp(QMainWindow):
         while (remaining_items or page_index == 0):
             canvas = PreviewWidget()
             canvas.selectionChanged.connect(self.update_image_adjustment_buttons)
+            canvas.stateChanged.connect(self.save_state_tab1)
             
             if getattr(self, 'chk_enable_grid', None) and self.chk_enable_grid.isChecked():
                 canvas.grid_cols = self.sb_grid_cols.value()
@@ -3451,6 +3782,8 @@ class PhotoPrintApp(QMainWindow):
         if self.stacked_widget.count() > 0:
             self.stacked_widget.setCurrentIndex(0)
         self.update_pagination_ui()
+        if not getattr(self.history_tab1, 'is_undoing_redoing', False):
+            self.save_state_tab1()
 
     def open_settings(self):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout
@@ -3846,12 +4179,31 @@ class PhotoPrintApp(QMainWindow):
         self.id_preview.is_manual = True
         self.id_preview.photo_positions = []
         self.id_preview.itemDoubleClicked.connect(self.on_id_preview_double_clicked)
+        self.id_preview.stateChanged.connect(self.save_state_tab3)
+        
+        mid_panel = QWidget()
+        mid_layout = QVBoxLayout(mid_panel)
+        h_mid_top = QHBoxLayout()
+        mid_title = QLabel("<b>ទិដ្ឋភាពបង្ហាញជាក់ស្តែង / LIVE ID PREVIEW</b>")
+        mid_title.setAlignment(Qt.AlignCenter)
+        mid_title.setFont(QFont("Khmer OS Battambang", 11))
+        h_mid_top.addWidget(mid_title)
+        self.btn_undo3 = QPushButton("↶ Undo (Ctrl+Z)")
+        self.btn_redo3 = QPushButton("↷ Redo (Ctrl+Y)")
+        self.btn_undo3.clicked.connect(self.undo_action)
+        self.btn_redo3.clicked.connect(self.redo_action)
+        self.btn_undo3.setEnabled(False)
+        self.btn_redo3.setEnabled(False)
+        h_mid_top.addWidget(self.btn_undo3)
+        h_mid_top.addWidget(self.btn_redo3)
+        mid_layout.addLayout(h_mid_top)
         
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setStyleSheet("QScrollArea { background-color: #dbe2e9; border: none; }")
         scroll_area.setWidget(self.id_preview)
-        layout.addWidget(scroll_area, 1)
+        mid_layout.addWidget(scroll_area)
+        layout.addWidget(mid_panel, 1)
         
         # Right Panel
         right_panel = QWidget()
@@ -4200,6 +4552,8 @@ class PhotoPrintApp(QMainWindow):
             curr_y += id_h + gap
             
         self.id_preview.update()
+        if not getattr(self.history_tab3, 'is_undoing_redoing', False):
+            self.save_state_tab3()
 
     def save_id_pdf(self, show_msg=True):
         from PyQt5.QtWidgets import QMessageBox
@@ -4377,9 +4731,10 @@ if __name__ == '__main__':
             base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         return os.path.join(base_path, relative_path)
         
-    icon_path = get_resource_path('Assets/icon.png')
+    icon_path = get_resource_path('Assets/Icon.ico')
     app_icon = QIcon(icon_path)
     app.setWindowIcon(app_icon)
+    app.setApplicationName("Fast Print Text Photo")
     
     window = PhotoPrintApp()
     window.setWindowIcon(app_icon)

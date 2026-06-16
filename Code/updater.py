@@ -6,7 +6,7 @@ import subprocess
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtWidgets import QMessageBox, QProgressDialog, QApplication
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 GITHUB_REPO = "DPSSCOPY/Photo-Print-App"
 
 class UpdateCheckerThread(QThread):
@@ -21,7 +21,7 @@ class UpdateCheckerThread(QThread):
             with urllib.request.urlopen(req, timeout=10) as response:
                 data = json.loads(response.read().decode())
                 
-                latest_version = data.get('tag_name', '').lstrip('v')
+                latest_version = data.get('tag_name', '').lower().lstrip('v')
                 release_notes = data.get('body', '')
                 
                 # Compare versions (simple string comparison for semantic versioning)
@@ -50,7 +50,7 @@ class UpdateCheckerThread(QThread):
 
     def is_newer_version(self, current, latest):
         def parse_version(v):
-            return [int(x) for x in v.replace('v', '').split('.') if x.isdigit()]
+            return [int(x) for x in v.lower().replace('v', '').split('.') if x.isdigit()]
         try:
             return parse_version(latest) > parse_version(current)
         except:
